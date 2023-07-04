@@ -1,1 +1,1 @@
-from jaxppo.networks import Actor, Critic
+from jaxppo.networks import Network

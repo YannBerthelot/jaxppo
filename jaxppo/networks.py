@@ -1,6 +1,7 @@
+from typing import Callable, Optional, Sequence, Union
+
 import flax.linen as nn
 from jax import Array
-from typing import Sequence, Union, Callable, Optional
 from jax.typing import ArrayLike
 
 activation_function_type = type(Callable[[ArrayLike], Array])

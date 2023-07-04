@@ -1,12 +1,13 @@
-from jaxppo.networks import Network
-import jax
-import pytest
-import jax.numpy as jnp
-import flax.linen as nn
-from typing import List, Union, Callable
 import pdb
+from typing import Callable, List, Union
+
+import flax.linen as nn
+import jax
+import jax.numpy as jnp
+import pytest
 from flax.core import freeze, unfreeze
 
+from jaxppo.networks import Network
 
 activation_function_type = type(Callable[[jax.typing.ArrayLike], jax.Array])
 
