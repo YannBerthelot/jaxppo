@@ -12,6 +12,7 @@ flax = "^0.6.11"
 gymnasium = "^0.28.1"
 optax = "^0.1.5"
 numpy = "^1.25.0"
+tensorflow-probability = "^0.20.1"
 
 
 [tool.poetry.group.dev.dependencies]
