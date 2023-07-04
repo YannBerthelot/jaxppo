@@ -1,7 +1,8 @@
+import pdb
+from typing import Tuple
+
 import jax.numpy as jnp
 from flax.struct import dataclass
-from typing import Tuple
-import pdb
 
 
 @dataclass
