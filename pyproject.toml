@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "jaxppo"
+version = "0.1.0"
+description = ""
+authors = ["Yann Berthelot <yannberthelot1@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+jax = "^0.4.13"
+flax = "^0.6.11"
+gymnasium = "^0.28.1"
+optax = "^0.1.5"
+numpy = "^1.25.0"
+
+
+[tool.poetry.group.dev.dependencies]
+isort = "^5.12.0"
+black = "^23.3.0"
+flake8 = "^6.0.0"
+mypy = "^1.4.1"
+pytest = "^7.4.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
