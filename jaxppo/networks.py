@@ -4,10 +4,10 @@ import flax.linen as nn
 from jax import Array
 from jax.typing import ArrayLike
 
-activation_function_type = type(Callable[[ArrayLike], Array])
+ActivationFunction = Callable[[ArrayLike], Array]
 
 
-def parse_activation(activation: str) -> activation_function_type:
+def parse_activation(activation: str) -> ActivationFunction:
     """Parse string representing activation towards jax activation function"""
     activation_matching = {"relu": nn.relu, "tanh": nn.tanh}
     if activation not in activation_matching.keys():
@@ -18,18 +18,19 @@ def parse_activation(activation: str) -> activation_function_type:
     return activation_matching[activation]
 
 
+def parse_layer(layer: str) -> Union[nn.Dense, ActivationFunction]:
+    return (
+        nn.Dense(int(layer))
+        if layer.isnumeric()
+        else parse_activation(activation=layer)
+    )
+
+
 def parse_architecture(
     architecture: Sequence[str],
-) -> Sequence[Union[nn.Dense, activation_function_type]]:
+) -> Sequence[Union[nn.Dense, ActivationFunction]]:
     """Parse list of string architecture into a list of jax modules"""
-    return [
-        (
-            nn.Dense(int(layer))
-            if layer.isnumeric()
-            else parse_activation(activation=layer)
-        )
-        for layer in architecture
-    ]
+    return [parse_layer(layer) for layer in architecture]
 
 
 class Network(nn.Module):

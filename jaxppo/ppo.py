@@ -22,15 +22,15 @@ def select_action_and_update_buffer(buffer, obs, done, key, step):
     value = predict_value(obs)
     action_logits = predict_action_logits(obs)
     logprob, action = get_logprob_and_action(key, action_logits)
-
-    buffer_step_dict = {
-        "obs": obs,
-        "dones": done,
-        "actions": action,
-        "logprobs": logprob,
-        "values": value,
-    }
-    buffer = insert_buffer(buffer, step, buffer_step_dict)
+    buffer = insert_buffer(
+        buffer,
+        step,
+        obs=obs,
+        dones=done,
+        actions=action,
+        logprobs=logprob,
+        values=value,
+    )
 
 
 def rollout(
