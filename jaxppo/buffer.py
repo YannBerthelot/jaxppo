@@ -66,6 +66,7 @@ def update_gae_advantages(
     # Compute advantage using generalized advantage estimate
     lastgaelam = 0
     num_steps = buffer.dones.shape[0]
+    gaes = []
     for t in reversed(range(num_steps)):
         if t == num_steps - 1:
             nextnonterminal = 1.0 - next_done
@@ -77,7 +78,8 @@ def update_gae_advantages(
             buffer.rewards[t] + gamma * nextvalues * nextnonterminal - buffer.values[t]
         )
         lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-        buffer = buffer.replace(advantages=buffer.advantages.at[t].set(lastgaelam))
+        gaes.append(lastgaelam)
+    buffer = buffer.replace(advantages=buffer.advantages.at[:].set(gaes[::-1]))
     return buffer
 
 

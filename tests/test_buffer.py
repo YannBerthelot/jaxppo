@@ -96,6 +96,5 @@ def test_compute_gae():
             values=values[step],
         )
     buffer = update_gae_advantages(buffer, next_done, next_value, gamma, gae_lambda)
-    assert jnp.allclose(
-        buffer.advantages, jnp.array([[gae_1], [gae_2], [gae_3], [gae_4]])
-    )
+    exepcted_array = jnp.array([[gae_1], [gae_2], [gae_3], [gae_4]])
+    assert jnp.allclose(buffer.advantages, exepcted_array)
