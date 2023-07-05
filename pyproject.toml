@@ -22,6 +22,61 @@ flake8 = "^6.0.0"
 mypy = "^1.4.1"
 pytest = "^7.4.0"
 tox = "^4.6.3"
+coverage = "^7.2.7"
+
+[tool.black]
+line-length = 88
+preview = true
+verbose = true
+
+[tool.isort]
+profile = "black"
+
+[tool.flake8]
+max-line-length = 88
+
+
+[tool.tox]
+legacy_tox_ini = """
+
+[tox]
+isolated_build = True
+envlist =
+    py38
+    linting
+    coverage
+
+[testenv:testing]
+extras = 
+    rlberry
+    sb3
+deps = pyproject.toml
+allowlist_externals = pytest
+changedir = {envtmpdir}  # Move elsewhere to ensure pytest doesn't run from source root.
+commands =
+    pytest {toxinidir}
+
+[testenv:linting]
+deps = pre-commit
+commands = pre-commit run --all-files
+
+[testenv:coverage]
+extras = 
+    rlberry
+    sb3
+deps = 
+    coverage[toml]
+    pyproject.toml
+    pytest
+commands =
+    coverage run --source=jaxppo --branch -m pytest {toxinidir}
+    coverage report -m --fail-under 90
+    coverage xml -o {toxinidir}/coverage.xml
+
+[gh-actions]
+python =
+    3.8: py38, coverage, linting
+"""
 
 [build-system]
 requires = ["poetry-core"]
