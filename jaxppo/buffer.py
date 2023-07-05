@@ -36,7 +36,7 @@ def init_buffer(
     )
 
 
-def insert_buffer(buffer: Buffer, step: int, feature_dict: dict) -> Buffer:
+def insert_buffer(buffer: Buffer, step: int, **kwargs) -> Buffer:
     """
     Insert new values into the buffer at the given step.
     Values are to be fed using a dict following this template:
@@ -45,8 +45,7 @@ def insert_buffer(buffer: Buffer, step: int, feature_dict: dict) -> Buffer:
         {"obs":[7.3,1.5], "dones":[0.,1.]}
     """
     replace_dict = {
-        key: buffer.__dict__[key].at[step].set(value)
-        for key, value in feature_dict.items()
+        key: buffer.__dict__[key].at[step].set(value) for key, value in kwargs.items()
     }
     return buffer.replace(**replace_dict)
 

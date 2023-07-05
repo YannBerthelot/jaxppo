@@ -47,8 +47,9 @@ def test_init_buffer(setup_buffer):
 def test_insert_buffer(setup_buffer):
     buffer = setup_buffer
     step = 1
-    feature_dict = {"rewards": jnp.ones(2), "advantages": jnp.ones(2) * 2}
-    buffer = insert_buffer(buffer, step, feature_dict)
+    buffer = insert_buffer(
+        buffer, step, rewards=jnp.ones(2), advantages=jnp.ones(2) * 2
+    )
     assert jnp.allclose(buffer.rewards[1], jnp.ones(2))
     assert jnp.allclose(buffer.advantages[1], jnp.ones(2) * 2)
 
@@ -90,7 +91,9 @@ def test_compute_gae():
         buffer = insert_buffer(
             buffer,
             step,
-            {"dones": dones[step], "rewards": rewards[step], "values": values[step]},
+            dones=dones[step],
+            rewards=rewards[step],
+            values=values[step],
         )
     buffer = update_gae_advantages(buffer, next_done, next_value, gamma, gae_lambda)
     assert jnp.allclose(
