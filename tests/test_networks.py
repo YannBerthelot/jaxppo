@@ -30,7 +30,7 @@ def check_nn_is_equal(
 
 @pytest.fixture
 def setup_simple_actor():
-    architecture = ["64", "tanh", "32", "relu"]
+    architecture = ["64", nn.tanh, "32", "relu"]
     obs_dim = 2
     num_actions = 2
     return Network(

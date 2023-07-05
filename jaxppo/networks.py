@@ -1,35 +1,57 @@
-from typing import Callable, Optional, Sequence, Union
+from typing import Optional, Sequence, Union, get_args
 
 import flax.linen as nn
+import jax
 from jax import Array
-from jax.typing import ArrayLike
+import jaxlib
+import pdb
 
-ActivationFunction = Callable[[ArrayLike], Array]
+ActivationFunction = Union[
+    jax._src.custom_derivatives.custom_jvp, jaxlib.xla_extension.PjitFunction
+]
 
 
-def parse_activation(activation: str) -> ActivationFunction:
-    """Parse string representing activation towards jax activation function"""
+def parse_activation(activation: Union[str, ActivationFunction]) -> ActivationFunction:
+    """Parse string representing activation or jax activation function towards \
+        jax activation function"""
     activation_matching = {"relu": nn.relu, "tanh": nn.tanh}
-    if activation not in activation_matching.keys():
-        raise ValueError(
-            f"Unrecognized activation {activation}, acceptable activations are :"
-            f" {activation_matching.keys()}"
-        )
-    return activation_matching[activation]
+    match activation:
+        case str() as activation:
+            if activation in activation_matching.keys():
+                return activation_matching[activation]
+            else:
+                raise ValueError(
+                    f"Unrecognized activation name {activation}, acceptable activations"
+                    f" names are : {activation_matching.keys()}"
+                )
+        case activation if isinstance(activation, get_args(ActivationFunction)):
+            return activation
+        case _:
+            raise ValueError(f"Unrecognized activation {activation}")
+
+    # if activation not in activation_matching.keys():
+    #     raise ValueError(
+    #         f"Unrecognized activation {activation}, acceptable activations are :"
+    #         f" {activation_matching.keys()}"
+    #     )
+    # return activation_matching[activation]
 
 
-def parse_layer(layer: str) -> Union[nn.Dense, ActivationFunction]:
+def parse_layer(
+    layer: Union[str, ActivationFunction]
+) -> Union[nn.Dense, ActivationFunction]:
+    """Parse a layer representation into either a Dense or an activation function"""
     return (
         nn.Dense(int(layer))
-        if layer.isnumeric()
+        if str(layer).isnumeric()
         else parse_activation(activation=layer)
     )
 
 
 def parse_architecture(
-    architecture: Sequence[str],
+    architecture: Sequence[Union[str, ActivationFunction]],
 ) -> Sequence[Union[nn.Dense, ActivationFunction]]:
-    """Parse list of string architecture into a list of jax modules"""
+    """Parse a list of string/module architecture into a list of jax modules"""
     return [parse_layer(layer) for layer in architecture]
 
 
