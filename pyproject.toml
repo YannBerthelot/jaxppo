@@ -13,6 +13,7 @@ gymnasium = "^0.28.1"
 optax = "^0.1.5"
 numpy = "^1.25.0"
 tensorflow-probability = "^0.20.1"
+tqdm = "^4.65.0"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -42,7 +43,7 @@ legacy_tox_ini = """
 [tox]
 isolated_build = True
 envlist =
-    py38
+    py311
     linting
     coverage
 
@@ -75,7 +76,7 @@ commands =
 
 [gh-actions]
 python =
-    3.8: py38, coverage, linting
+    3.11: py311, coverage, linting
 """
 
 [build-system]
