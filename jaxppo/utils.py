@@ -6,7 +6,7 @@ import gymnasium as gym
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 
 
-def get_env_action_shape(env: Union[gym.Env, SyncVectorEnv]) -> tuple:
+def get_env_action_shape(env: Union[gym.Env, SyncVectorEnv]) -> Tuple[int]:
     """
     Get the shape of the action space of a gym env
     (Number of actions if discrete, else the shape of the continuous actions)
@@ -24,7 +24,7 @@ def get_env_action_shape(env: Union[gym.Env, SyncVectorEnv]) -> tuple:
     return action_shape
 
 
-def get_env_observation_shape(env: Union[gym.Env, SyncVectorEnv]) -> tuple:
+def get_env_observation_shape(env: Union[gym.Env, SyncVectorEnv]) -> Tuple[int]:
     """
     Get the shape of the observation space of a gym env (or Vec Env)
     """
