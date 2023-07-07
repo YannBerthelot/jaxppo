@@ -1,19 +1,33 @@
-import pdb
-from typing import Callable, List, Union
+# pylint: disable = missing-function-docstring, missing-module-docstring
+from typing import List, TypeAlias, Union
 
 import flax.linen as nn
+import gymnasium as gym
 import jax
 import jax.numpy as jnp
+import jaxlib
 import pytest
 from flax.core import freeze, unfreeze
+from jax import random
 
-from jaxppo.networks import Network
+from jaxppo.networks import (
+    Network,
+    get_adam_tx,
+    init_agent_state,
+    init_networks,
+    predict_action_logits,
+    predict_value,
+)
+from jaxppo.utils import get_num_actions, make_envs
 
-activation_function_type = type(Callable[[jax.typing.ArrayLike], jax.Array])
+ActivationFunction: TypeAlias = Union[
+    jax._src.custom_derivatives.custom_jvp, jaxlib.xla_extension.PjitFunction
+]
 
 
 def check_nn_is_equal(
-    nn_1: List[Union[nn.Dense, activation_function_type]], nn_2
+    nn_1: List[Union[nn.Dense, ActivationFunction]],
+    nn_2: List[Union[nn.Dense, ActivationFunction]],
 ) -> None:
     """
     Check if layers are equivalent:
@@ -31,10 +45,8 @@ def check_nn_is_equal(
 @pytest.fixture
 def setup_simple_actor():
     architecture = ["64", nn.tanh, "32", "relu"]
-    obs_dim = 2
     num_actions = 2
     return Network(
-        obs_dim=obs_dim,
         input_architecture=architecture,
         actor=True,
         num_of_actions=num_actions,
@@ -44,9 +56,7 @@ def setup_simple_actor():
 @pytest.fixture
 def setup_simple_critic():
     architecture = ["64", "tanh", "32", "relu"]
-    obs_dim = 2
     return Network(
-        obs_dim=obs_dim,
         input_architecture=architecture,
         actor=False,
     )
@@ -91,7 +101,6 @@ def test_network_forward_pass():
     obs_dim = 2
     num_actions = 1
     actor = Network(
-        obs_dim=obs_dim,
         input_architecture=architecture,
         actor=True,
         num_of_actions=num_actions,
@@ -135,3 +144,113 @@ def test_RNG_init(setup_simple_actor):
     new_output = actor.apply(variables, obs)
 
     assert jnp.array_equal(output, new_output)
+
+
+def test_network_init():
+    env = gym.make("CartPole-v1")
+    num_actions = 2
+    actor_architecture = ["32", "tanh", "32", "tanh"]
+    critic_architecture = ["32", "relu", "32", "relu"]
+    actor, critic = init_networks(env, actor_architecture, critic_architecture)
+    expected_actor = nn.Sequential(
+        [
+            nn.Dense(32),
+            nn.tanh,
+            nn.Dense(32),
+            nn.tanh,
+            nn.Dense(num_actions),
+        ]
+    )
+    check_nn_is_equal(actor.architecture.layers, expected_actor.layers)
+
+    expected_critic = nn.Sequential(
+        [
+            nn.Dense(32),
+            nn.relu,
+            nn.Dense(32),
+            nn.relu,
+            nn.Dense(1),
+        ]
+    )
+    check_nn_is_equal(critic.architecture.layers, expected_critic.layers)
+
+
+@pytest.fixture
+def setup_agent_state():
+    env = gym.make("CartPole-v1")
+    actor_architecture = ["32", "tanh", "32", "tanh"]
+    critic_architecture = ["32", "relu", "32", "relu"]
+    actor, critic = init_networks(env, actor_architecture, critic_architecture)
+
+    key = random.PRNGKey(42)
+    actor_key, critic_key = random.split(key, num=2)
+    tx = get_adam_tx()
+    agent_state = init_agent_state(
+        actor=actor,
+        critic=critic,
+        actor_key=actor_key,
+        critic_key=critic_key,
+        env=env,
+        tx=tx,
+    )
+    return agent_state
+
+
+def test_init_agent_state(setup_agent_state):
+    env = gym.make("CartPole-v1")
+    obs = env.reset()[0]
+    agent_state = setup_agent_state
+    action_logits = agent_state.actor_fn(agent_state.params.actor_params, obs)
+    value = agent_state.critic_fn(agent_state.params.critic_params, obs)
+
+    assert len(action_logits) == get_num_actions(env)
+    assert len(value) == 1
+
+
+def test_predict_value():
+    env = gym.make("CartPole-v1")
+    actor_architecture = ["32", "tanh", "32", "tanh"]
+    critic_architecture = ["32", "relu", "32", "relu"]
+    actor, critic = init_networks(env, actor_architecture, critic_architecture)
+
+    key = random.PRNGKey(42)
+    actor_key, critic_key = random.split(key, num=2)
+    tx = get_adam_tx()
+    agent_state = init_agent_state(
+        actor=actor,
+        critic=critic,
+        actor_key=actor_key,
+        critic_key=critic_key,
+        env=env,
+        tx=tx,
+    )
+    obs = env.reset()[0]
+    value = predict_value(
+        agent_state=agent_state, agent_params=agent_state.params, obs=obs
+    )
+    assert isinstance(value, jax.Array)
+
+
+def test_predict_action_logits():
+    env = gym.make("CartPole-v1")
+    actor_architecture = ["32", "tanh", "32", "tanh"]
+    critic_architecture = ["32", "relu", "32", "relu"]
+    actor, critic = init_networks(env, actor_architecture, critic_architecture)
+
+    key = random.PRNGKey(42)
+    actor_key, critic_key = random.split(key, num=2)
+    tx = get_adam_tx()
+    agent_state = init_agent_state(
+        actor=actor,
+        critic=critic,
+        actor_key=actor_key,
+        critic_key=critic_key,
+        env=env,
+        tx=tx,
+    )
+    obs = env.reset()[0]
+    logits = predict_action_logits(
+        agent_state=agent_state, agent_params=agent_state.params, obs=obs
+    )
+    assert isinstance(logits, jax.Array)
+    assert len(logits) == get_num_actions(env)
