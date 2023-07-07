@@ -1,5 +1,7 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
+default_language_version:
+    python: python3.11
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.0.1
@@ -22,7 +24,7 @@ repos:
         args: ["--check", "--profile", "black"]
 
   - repo: https://github.com/PyCQA/flake8
-    rev: 4.0.1
+    rev: 6.0.0
     hooks:
       - id: flake8
         additional_dependencies: [mccabe]
@@ -39,7 +41,7 @@ repos:
           ]
 
   - repo: https://github.com/PyCQA/pylint/
-    rev: v2.14.5
+    rev: v2.17.4
     hooks:
       - id: pylint
         exclude: src/probing_environments/envs.py
