@@ -3,7 +3,7 @@ from typing import Tuple
 
 import jax.numpy as jnp
 from flax import struct
-from jax import Array, jit
+from jax import Array
 
 
 class Buffer(struct.PyTreeNode):  # type : ignore
@@ -39,7 +39,6 @@ def init_buffer(
     )
 
 
-@jit
 def insert_buffer(buffer: Buffer, step_idx: int, **kwargs) -> Buffer:
     """
     Insert new values into the buffer at the given step.
@@ -64,7 +63,6 @@ def insert_buffer(buffer: Buffer, step_idx: int, **kwargs) -> Buffer:
     return buffer.replace(**replace_dict)
 
 
-@jit
 def update_gae_advantages(
     buffer: Buffer, next_done: int, next_value: Array, gamma: float, gae_lambda: float
 ) -> Buffer:
@@ -98,7 +96,6 @@ def update_gae_advantages(
     return buffer
 
 
-@jit
 def update_returns(buffer: Buffer) -> Buffer:
     """Save returns as advantages + values"""
     return buffer.replace(returns=buffer.advantages + buffer.values)

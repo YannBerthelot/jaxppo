@@ -9,7 +9,7 @@ import optax
 from flax import struct
 from flax.core import FrozenDict, freeze
 from flax.training.train_state import TrainState
-from jax import Array, jit, random
+from jax import Array, random
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
 
@@ -165,7 +165,6 @@ def init_agent_state(
     )
 
 
-@jit
 def predict_value(
     agent_state: AgentState, agent_params: AgentParams, obs: ndarray
 ) -> Array:
@@ -173,7 +172,6 @@ def predict_value(
     return agent_state.critic_fn(agent_params.critic_params, obs)  # type: ignore[attr-defined]
 
 
-@jit
 def predict_action_logits(
     agent_state: AgentState, agent_params: AgentParams, obs: ndarray
 ) -> Array:
