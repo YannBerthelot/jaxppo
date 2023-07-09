@@ -20,9 +20,14 @@ category = "main"
 optional = false
 python-versions = "*"
 files = [
-    {file = "appdirs-1.4.4-py2.py3-none-any.whl", hash = "sha256:a841dacd6b99318a741b166adb07e19ee71a274450e68237b4650ca1055ab128"},
-    {file = "appdirs-1.4.4.tar.gz", hash = "sha256:7d5d0167b2b1ba821647616af46a749d1c653740dd0d2415100fe26e27afdf41"},
+    {file = "appdirs-1.4.4-py2.py3-none-any.whl", hash = "sha256:cdeeb96b1f938fa126c2bd3b7b5af799f07ca82c5ed57cf048e09c31d7d67136"},
+    {file = "appdirs-1.4.4.tar.gz", hash = "sha256:a5ad344a005afb2759b5c124ed6755022b129e7b11a676e64909c110d748023e"},
 ]
+
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
 
 [[package]]
 name = "black"
@@ -242,6 +247,11 @@ files = [
 [package.dependencies]
 colorama = {version = "*", markers = "platform_system == \"Windows\""}
 
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
+
 [[package]]
 name = "cloudpickle"
 version = "2.2.1"
@@ -265,6 +275,11 @@ files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
 ]
+
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
 
 [[package]]
 name = "coverage"
@@ -465,7 +480,7 @@ lazy-imports = ["etils[ecolab]"]
 name = "exceptiongroup"
 version = "1.1.2"
 description = "Backport of PEP 654 (exception groups)"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
@@ -669,13 +684,18 @@ testing = ["flake8 (<5)", "pytest (>=6)", "pytest-black (>=0.3.7)", "pytest-chec
 name = "iniconfig"
 version = "2.0.0"
 description = "brain-dead simple config-ini parsing"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
     {file = "iniconfig-2.0.0-py3-none-any.whl", hash = "sha256:b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374"},
     {file = "iniconfig-2.0.0.tar.gz", hash = "sha256:2d91e135bf72d31a410b17c16da610a82cb55f6b0477d1a902134b24a455b8b3"},
 ]
+
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
 
 [[package]]
 name = "isort"
@@ -987,7 +1007,7 @@ reports = ["lxml"]
 name = "mypy-extensions"
 version = "1.0.0"
 description = "Type system extensions for programs checked with the mypy type checker."
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.5"
 files = [
@@ -1127,7 +1147,7 @@ testing = ["flax", "pytest", "pytest-xdist"]
 name = "packaging"
 version = "23.1"
 description = "Core utilities for Python packages"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
@@ -1178,7 +1198,7 @@ test = ["appdirs (==1.4.4)", "covdefaults (>=2.3)", "pytest (>=7.3.1)", "pytest-
 name = "pluggy"
 version = "1.2.0"
 description = "plugin and hook calling mechanisms for python"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
@@ -1208,6 +1228,28 @@ identify = ">=1.0.0"
 nodeenv = ">=0.11.1"
 pyyaml = ">=5.1"
 virtualenv = ">=20.10.0"
+
+[[package]]
+name = "probing-environments"
+version = "0.4.0"
+description = "Probing environments for RL/DeepRL algorithms debugging"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "probing_environments-0.4.0-py3-none-any.whl", hash = "sha256:2d146080aa5e6123230462eea1ab5c7ace38c94d1cad9c7870d42a2711bd8d14"},
+    {file = "probing_environments-0.4.0.tar.gz", hash = "sha256:65d6b6b57072d15e2e1e60924ab2cf8f0c18e17dcd2f87be74b5cc7cbc7cc4be"},
+]
+
+[package.dependencies]
+gymnasium = ">=0.28.1,<0.29.0"
+mypy-extensions = ">=1.0.0,<2.0.0"
+pytest = ">=7.4.0,<8.0.0"
+
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
 
 [[package]]
 name = "protobuf"
@@ -1298,6 +1340,11 @@ files = [
 [package.extras]
 plugins = ["importlib-metadata"]
 
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
+
 [[package]]
 name = "pyproject-api"
 version = "1.5.3"
@@ -1322,7 +1369,7 @@ testing = ["covdefaults (>=2.3)", "importlib-metadata (>=6.6)", "pytest (>=7.3.1
 name = "pytest"
 version = "7.4.0"
 description = "pytest: simple powerful testing with Python"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
@@ -1698,7 +1745,7 @@ numpy = ">=1.16.0"
 name = "tomli"
 version = "2.0.1"
 description = "A lil' TOML parser"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
@@ -1826,8 +1873,8 @@ category = "main"
 optional = false
 python-versions = ">=3.6"
 files = [
-    {file = "wandb-0.15.5-py3-none-any.whl", hash = "sha256:8cfb8fdaaf0a35b636d0ca2c2c1262b0e3d835ac37f70fc3094b618f55f63f01"},
-    {file = "wandb-0.15.5.tar.gz", hash = "sha256:40c1d9ae501194bff408bc9c555865ffcccf08d2d65dd413547df0c17ed20cb5"},
+    {file = "wandb-0.15.5-py3-none-any.whl", hash = "sha256:f82ce6e743b22041382a59030855b52de0606c91d2e0a88d1aec57ed5d0baa13"},
+    {file = "wandb-0.15.5.tar.gz", hash = "sha256:cc7e4b07e68d33cf259656d930fffcd2b75f0f2b3e15615871f1cead77f412e4"},
 ]
 
 [package.dependencies]
@@ -1856,6 +1903,11 @@ media = ["bokeh", "moviepy", "numpy", "pillow", "plotly", "rdkit-pypi", "soundfi
 models = ["cloudpickle"]
 sweeps = ["sweeps (>=0.2.0)"]
 
+[package.source]
+type = "legacy"
+url = "https://test.pypi.org/simple"
+reference = "testpypi"
+
 [[package]]
 name = "zipp"
 version = "3.15.0"
@@ -1875,4 +1927,4 @@ testing = ["big-O", "flake8 (<5)", "jaraco.functools", "jaraco.itertools", "more
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "d7c72a79eefe226161d189be2e9c31138fb5ca7eb9936e6e968f38c82c54b2c9"
+content-hash = "06ddfb7020e16bb65d52d1ce8de7322d91c174cedf2d3fcb742980c667991cbb"
