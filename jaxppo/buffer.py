@@ -3,7 +3,7 @@ from typing import Tuple
 
 import jax.numpy as jnp
 from flax import struct
-from jax import Array
+from jax import Array, jit
 
 
 class Buffer(struct.PyTreeNode):  # type : ignore
@@ -29,7 +29,7 @@ def init_buffer(
         track"""
     return Buffer(
         obs=jnp.zeros((num_steps, num_envs) + observation_space_shape),
-        actions=jnp.zeros((num_steps, num_envs) + action_space_shape),
+        actions=jnp.zeros((num_steps, num_envs) + action_space_shape, dtype=jnp.int32),
         logprobs=jnp.zeros((num_steps, num_envs)),
         dones=jnp.zeros((num_steps, num_envs)),
         values=jnp.zeros((num_steps, num_envs)),
@@ -39,6 +39,7 @@ def init_buffer(
     )
 
 
+@jit
 def insert_buffer(buffer: Buffer, step_idx: int, **kwargs) -> Buffer:
     """
     Insert new values into the buffer at the given step.
@@ -63,6 +64,7 @@ def insert_buffer(buffer: Buffer, step_idx: int, **kwargs) -> Buffer:
     return buffer.replace(**replace_dict)
 
 
+@jit
 def update_gae_advantages(
     buffer: Buffer, next_done: int, next_value: Array, gamma: float, gae_lambda: float
 ) -> Buffer:
@@ -77,25 +79,26 @@ def update_gae_advantages(
     # Reset advantages values
     buffer = buffer.replace(advantages=buffer.advantages.at[:].set(0.0))
     # Compute advantage using generalized advantage estimate
-    lastgaelam = jnp.array(0.0)
+    lastgaelam = 0
     num_steps = buffer.dones.shape[0]
-    gaes = []
+    # gaes = []
     for t in reversed(range(num_steps)):
         if t == num_steps - 1:
-            nextnonterminal = jnp.array(1.0) - next_done
+            nextnonterminal = 1.0 - next_done
             nextvalues = next_value
         else:
-            nextnonterminal = jnp.array(1.0) - buffer.dones[t + 1]
+            nextnonterminal = 1.0 - buffer.dones[t + 1]
             nextvalues = buffer.values[t + 1]
         delta = (
             buffer.rewards[t] + gamma * nextvalues * nextnonterminal - buffer.values[t]
         )
         lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-        gaes.append(lastgaelam)
-    buffer = buffer.replace(advantages=buffer.advantages.at[:].set(gaes[::-1]))
+        # gaes.append(lastgaelam)
+        buffer = buffer.replace(advantages=buffer.advantages.at[t].set(lastgaelam))
     return buffer
 
 
+@jit
 def update_returns(buffer: Buffer) -> Buffer:
     """Save returns as advantages + values"""
     return buffer.replace(returns=buffer.advantages + buffer.values)

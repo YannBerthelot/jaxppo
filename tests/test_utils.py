@@ -1,4 +1,5 @@
 # pylint: disable = missing-function-docstring, missing-module-docstring
+import gymnasium as gym
 import pytest
 
 from jaxppo.utils import (
@@ -27,14 +28,22 @@ def test_get_parameterized_schedule():
     )
 
 
-def test_make_4_envs():
+def test_make_envs_from_env():
+    num_envs = 4
+    env = gym.make("CartPole-v1")
+    envs = make_envs(env, capture_video=False, num_envs=num_envs)
+    assert envs.num_envs == num_envs
+    assert envs.reset()[0].shape == (num_envs, envs.single_observation_space.shape[0])
+
+
+def test_make_4_envs_from_id():
     num_envs = 4
     envs = make_envs("CartPole-v1", capture_video=False, num_envs=num_envs)
     assert envs.num_envs == num_envs
     assert envs.reset()[0].shape == (num_envs, envs.single_observation_space.shape[0])
 
 
-def test_make_1_env():
+def test_make_1_env_from_id():
     num_envs = 1
     envs = make_envs("CartPole-v1", capture_video=False, num_envs=num_envs)
     assert envs.num_envs == num_envs

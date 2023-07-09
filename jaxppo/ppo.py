@@ -2,10 +2,12 @@
 from typing import Dict, Sequence, Tuple, Union
 
 import gymnasium as gym
+import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfp
+from flax.training.train_state import TrainState
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
-from jax import Array, device_get, random, value_and_grad
+from jax import Array, device_get, jit, random, value_and_grad
 from jax.lax import stop_gradient
 from numpy import ndarray
 from tqdm import tqdm
@@ -19,18 +21,28 @@ from jaxppo.buffer import (
 )
 from jaxppo.networks import (
     ActivationFunction,
-    AgentParams,
-    AgentState,
     get_adam_tx,
-    init_agent_state,
+    init_actor_and_critic_state,
     init_networks,
     predict_action_logits,
     predict_value,
 )
-from jaxppo.utils import get_env_action_shape, get_env_observation_shape, make_envs
-from jaxppo.wandb_logging import LoggingConfig, init_logging, log_variables
+from jaxppo.utils import (
+    annealed_linear_schedule,
+    get_env_action_shape,
+    get_env_observation_shape,
+    get_parameterized_schedule,
+    make_envs,
+)
+from jaxppo.wandb_logging import (
+    LoggingConfig,
+    finish_logging,
+    init_logging,
+    log_variables,
+)
 
 
+@jit
 def get_logprob_and_action(
     key: random.PRNGKeyArray, logits: Array
 ) -> Tuple[Array, Array, random.PRNGKeyArray]:
@@ -42,11 +54,12 @@ def get_logprob_and_action(
     return logprob, action.reshape(-1, 1) if len(action.shape) == 1 else action, key
 
 
+@jit
 def predict_action_and_value_then_update_buffer(
-    agent_state: AgentState,
+    actor_state: TrainState,
+    critic_state: TrainState,
     buffer: Buffer,
     obs: ndarray,
-    done: bool,
     key: random.PRNGKeyArray,
     step: int,
 ) -> Tuple[Buffer, Array, random.PRNGKeyArray]:
@@ -56,14 +69,13 @@ def predict_action_and_value_then_update_buffer(
     -Compute log-prob of the selected action
     -Store these values into the buffer
     """
-    value = predict_value(agent_state, agent_state.params, obs)
-    action_logits = predict_action_logits(agent_state, agent_state.params, obs)
+    value = predict_value(critic_state, critic_state.params, obs)
+    action_logits = predict_action_logits(actor_state, actor_state.params, obs)
     logprob, action, key = get_logprob_and_action(key, action_logits)
     buffer = insert_buffer(
         buffer,
         step,
         obs=obs,
-        dones=done,
         actions=action,
         logprobs=logprob,
         values=value.squeeze(),
@@ -71,15 +83,32 @@ def predict_action_and_value_then_update_buffer(
     return buffer, action, key
 
 
-def compute_logprob_entropy_value_for_update(agent_state, agent_params, obs, action):
+# @jit
+# def compute_logprob_entropy_value_for_update(agent_state, agent_params, obs, action):
+#     """Compute values needed for the PPO loss based on the agent state and \
+#         observed action and obs"""
+#     action_logits = predict_action_logits(agent_state, agent_params, obs)
+#     value = predict_value(agent_state, agent_params, obs)
+#     probs = tfp.Categorical(action_logits)
+#     return probs.log_prob(action), probs.entropy(), value.squeeze()
+
+
+@jit
+def compute_logprob_entropy_for_update(actor_state, actor_params, obs, action):
     """Compute values needed for the PPO loss based on the agent state and \
         observed action and obs"""
-    action_logits = predict_action_logits(agent_state, agent_params, obs)
-    value = predict_value(agent_state, agent_params, obs)
+    action_logits = predict_action_logits(actor_state, actor_params, obs)
     probs = tfp.Categorical(action_logits)
-    return probs.log_prob(action), probs.entropy(), value.squeeze()
+    return probs.log_prob(action), probs.entropy()
 
 
+@jit
+def compute_value_for_update(critic_state, critic_params, obs):
+    """Compute value based on critic state, critic params and observation."""
+    return predict_value(critic_state, critic_params, obs)
+
+
+@jit
 def compute_PPO_actor_loss(normalized_advantages, ratio, clip_coef):
     """Compute the actor loss according to PPO rule"""
     # Policy loss
@@ -87,10 +116,10 @@ def compute_PPO_actor_loss(normalized_advantages, ratio, clip_coef):
     actor_loss_clipped = -normalized_advantages * jnp.clip(
         ratio, 1 - clip_coef, 1 + clip_coef
     )
-
     return jnp.maximum(actor_loss_unclipped, actor_loss_clipped).mean()
 
 
+@jit
 def compute_kl_and_ratio(newlogprob, logprobs):
     """Compute approximate kl-divergence between old logprobs and new logprobs as well\
           as the ratio between them"""
@@ -102,46 +131,83 @@ def compute_kl_and_ratio(newlogprob, logprobs):
     return approx_kl, ratio
 
 
-def compte_PPO_critic_loss(next_values, returns, values):
+@jit
+def compte_PPO_critic_loss(next_values, returns):
     """Compute the critic loss according to PPO rule"""
-    # # Value loss
-    # value_loss_unclipped = (next_values - returns) ** 2
-    # value_clipped = values + jnp.clip(
-    #     next_values - values,
-    #     clip_coef,
-    #     clip_coef,
-    # )
-    # value_loss_unclipped = (value_loss_unclipped - returns) ** 2
-    # value_loss_max = jnp.maximum(value_loss_unclipped, value_clipped)
-
-    TD_gae_error = values - (returns + next_values)
-    mse_error = (TD_gae_error**2).mean()
-    # return 0.5 * value_loss_max.mean()
-    return mse_error
+    return 0.5 * ((next_values - returns) ** 2).mean()
 
 
-def ppo_loss(
-    agent_state: AgentState,
-    agent_params: AgentParams,
-    trajectory_and_variables: Tuple[Array, Array, Array, Array, Array, Array],
-    clip_coef=0.1,
-    vf_coef=0.5,
-    ent_coef=0.1,
+@jit
+def ppo_actor_loss(
+    actor_state, actor_params, trajectory_and_variables, clip_coef, ent_coef=0.01
 ):  # pylint: disable=R0914
-    """Compute the PPO loss given the buffer content provided and the hyperparameters"""
-    obs, actions, logprobs, advantages, returns, values = trajectory_and_variables
-    newlogprob, entropy, new_value = compute_logprob_entropy_value_for_update(
-        agent_state, agent_params, obs, actions
+    """Compute the actor loss according to PPO rules"""
+    obs, actions, logprobs, advantages, _, _ = trajectory_and_variables
+    newlogprob, entropy = compute_logprob_entropy_for_update(
+        actor_state, actor_params, obs, actions
     )
+
+    # if not jnp.array_equal(advantages - advantages.mean(), jnp.zeros(advantages.shape)):
+    #     normalized_advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    # else:
+    #     normalized_advantages = advantages
+    normalized_advantages = jax.lax.cond(
+        jnp.array_equal(advantages - advantages.mean(), jnp.zeros(advantages.shape)),
+        lambda: advantages,
+        lambda: (advantages - advantages.mean()) / (advantages.std() + 1e-8),
+    )
+    # normalized_advantages = advantages
+    assert (
+        newlogprob.shape == logprobs.shape
+    ), f"{newlogprob.shape=}, {logprobs.shape=} "
     approx_kl, ratio = compute_kl_and_ratio(newlogprob=newlogprob, logprobs=logprobs)
-    normalized_advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-    actor_loss = compute_PPO_actor_loss(normalized_advantages, ratio, clip_coef)
-    value_loss = compte_PPO_critic_loss(new_value, returns, values)
+    simple_actor_loss = compute_PPO_actor_loss(normalized_advantages, ratio, clip_coef)
     entropy_loss = entropy.mean()
+    actor_loss = simple_actor_loss + ent_coef * entropy_loss
+    return actor_loss, (
+        simple_actor_loss,
+        entropy_loss,
+        stop_gradient(approx_kl),
+        stop_gradient(advantages),
+        stop_gradient(normalized_advantages),
+    )
 
-    loss = actor_loss - ent_coef * entropy_loss + value_loss * vf_coef
-    return loss, (actor_loss, value_loss, entropy_loss, stop_gradient(approx_kl))
+
+@jit
+def ppo_critic_loss(
+    critic_state,
+    critic_params,
+    trajectory_and_variables,
+):
+    """Compute the critic loss according to PPO rules"""
+    obs, _, _, _, returns, _ = trajectory_and_variables
+    new_value = compute_value_for_update(critic_state, critic_params, obs)
+    return compte_PPO_critic_loss(new_value, returns)
+
+
+def get_flattened_experience(buffer, action_space_shape, observation_space_shape):
+    """Extract and reshape to flattened experience from the buffer"""
+    # observation_space_shape = (buffer.obs.shape[-1],)
+    # action_space_shape = (buffer.actions.shape[-1],)
+    obs = buffer.obs.reshape((-1,) + observation_space_shape)
+    logprobs = buffer.logprobs.reshape(-1)
+    actions = buffer.actions.reshape((-1,) + action_space_shape)
+    advantages = buffer.advantages.reshape(-1)
+    returns = buffer.returns.reshape(-1)
+    values = buffer.values.reshape(-1)
+    return obs, logprobs, actions, advantages, returns, values
+
+
+@jit
+def compute_explained_var(values, returns):
+    """Compute explained variance based on values and returns"""
+    # Calculate how good an approximation of the return is the value function
+    y_pred, y_true = values, returns
+    var_y = jnp.var(y_true)
+    return jax.lax.cond(
+        var_y == 0, lambda: jnp.nan, lambda: 1 - jnp.var(y_true - y_pred) / var_y
+    )
+    # return jnp.nan if var_y == 0 else 1 - jnp.var(y_true - y_pred) / var_y
 
 
 class PPO:  # pylint: disable=R0902, R0913, R0914
@@ -155,23 +221,25 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
         env: SyncVectorEnv,
         actor_architecture: Sequence[Union[ActivationFunction, str]] = (
             "64",
-            "relu",
+            "tanh",
             "64",
-            "relu",
+            "tanh",
         ),
         critic_architecture: Sequence[Union[ActivationFunction, str]] = (
             "64",
-            "relu",
+            "tanh",
             "64",
-            "relu",
+            "tanh",
         ),
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
         learning_rate: float = 3e-4,
         clip_coef: float = 0.2,
         entropy_coef: float = 0.01,
-        vf_coef: float = 0.5,
         logging_config: LoggingConfig = None,
+        num_minibatches=4,
+        update_epochs=4,
+        total_timesteps=5e4,
     ) -> None:
         """Init"""
         self.seed = seed
@@ -184,20 +252,30 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
         self.num_steps = num_steps
         self.env = env
         self.gamma, self.gae_lambda = gamma, gae_lambda
-        self.clip_coef, self.entropy_coef, self.vf_coef = (
+        self.clip_coef, self.entropy_coef = (
             clip_coef,
             entropy_coef,
-            vf_coef,
         )
+        self.num_minibatches = num_minibatches
+        self.update_epochs = update_epochs
         self.global_step = 0
 
-        actor, critic = init_networks(env, actor_architecture, critic_architecture)
+        actor_network, critic_network = init_networks(
+            env, actor_architecture, critic_architecture
+        )
+        batch_size = int(num_envs * num_steps)
+        scheduler = get_parameterized_schedule(
+            linear_scheduler=annealed_linear_schedule,
+            initial_learning_rate=learning_rate,
+            num_minibatches=num_minibatches,
+            update_epochs=update_epochs,
+            num_updates=total_timesteps // batch_size,
+        )
+        tx = get_adam_tx(learning_rate=scheduler)
 
-        tx = get_adam_tx(learning_rate=learning_rate)
-
-        self.agent_state = init_agent_state(
-            actor=actor,
-            critic=critic,
+        self.actor_state, self.critic_state = init_actor_and_critic_state(
+            actor_network=actor_network,
+            critic_network=critic_network,
             actor_key=actor_key,
             critic_key=critic_key,
             env=env,
@@ -211,7 +289,8 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
 
     def rollout(
         self,
-        agent_state: AgentState,
+        actor_state: TrainState,
+        critic_state: TrainState,
         env: Union[gym.Env, SyncVectorEnv],
         num_steps: int,
         obs: ndarray,
@@ -229,22 +308,29 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
         for step in range(num_steps):
             self.global_step += 1 * self.num_envs
             buffer, action, key = predict_action_and_value_then_update_buffer(
-                agent_state=agent_state,
+                actor_state=actor_state,
+                critic_state=critic_state,
                 buffer=buffer,
                 obs=obs,
-                done=done,
                 key=key,
                 step=step,
             )
+            buffer = insert_buffer(buffer, step, dones=done)
             obs, reward, terminated, truncated, infos = env.step(
                 device_get(action.squeeze())
             )
-            new_done = terminated | truncated
+            done = terminated | truncated
             buffer = insert_buffer(buffer, step, rewards=reward)
+            self.log_final_info(infos)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info is not None:
+        return obs, done, buffer, key, env
+
+    def log_final_info(self, infos):
+        """Log the episode returns at the end of episodes using the infos dict"""
+        if "final_info" in infos:
+            for info in infos["final_info"]:
+                if info is not None:
+                    if self.logging and "episode" in info:
                         log_variables(
                             {
                                 "episodic_return": info["episode"]["r"],
@@ -252,18 +338,30 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
                             }
                         )
 
-        return obs, new_done, buffer, key, env
-
     def get_action(self, obs: ndarray) -> ndarray:
         """Returns a numpy action compliant with gym using the current \
             state of the agent"""
         action_logits = predict_action_logits(
-            self.agent_state, self.agent_state.params, obs
+            self.actor_state, self.actor_state.params, obs
         )
         self.key, subkey = random.split(self.key)
         probs = tfp.Categorical(action_logits)
         action = probs.sample(seed=subkey)
         return action
+
+    def get_probs(self, obs: ndarray) -> ndarray:
+        """Returns a numpy action compliant with gym using the current \
+            state of the agent"""
+        action_logits = predict_action_logits(
+            self.actor_state, self.actor_state.params, obs
+        )
+        probs = tfp.Categorical(action_logits)
+        return probs.probs_parameter()
+
+    def get_value(self, obs: ndarray) -> ndarray:
+        """Returns a numpy action compliant with gym using the current \
+            state of the agent"""
+        return predict_value(self.critic_state, self.critic_state.params, obs)
 
     def test(self, env: gym.Env, num_episodes: int) -> Sequence[Union[float, int]]:
         """Tests the agent's performance (sum of episodic rewards) over \
@@ -280,10 +378,11 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
                 done = terminated | truncated
                 reward_sum += reward
             rewards.append(reward_sum)
-            log_variables(
-                {"test_episode": episode, "episodic reward sum": reward_sum},
-                commit=True,
-            )
+            if self.logging:
+                log_variables(
+                    {"test_episode": episode, "episodic reward sum": reward_sum},
+                    commit=True,
+                )
         return rewards
 
     def train(self, env: SyncVectorEnv, total_timesteps: int):
@@ -297,10 +396,10 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
         obs, _ = env.reset(seed=self.seed)
         num_updates = total_timesteps // self.batch_size
         done = jnp.zeros(self.num_envs)
-
         for _ in tqdm(range(1, num_updates + 1)):
-            obs, done, buffer, self.action_key, env = self.rollout(
-                agent_state=self.agent_state,
+            new_obs, done, buffer, self.action_key, env = self.rollout(
+                actor_state=self.actor_state,
+                critic_state=self.critic_state,
                 env=env,
                 num_steps=self.num_steps,
                 obs=obs,
@@ -308,19 +407,22 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
                 buffer=buffer,
                 key=self.action_key,
             )
+            obs = new_obs
             next_value = predict_value(
-                self.agent_state, self.agent_state.params, obs
+                self.critic_state, self.critic_state.params, new_obs
             ).squeeze()
             buffer_with_advantages = update_gae_advantages(
                 buffer, done, next_value, self.gamma, self.gae_lambda
             )
             buffer_with_returns = update_returns(buffer_with_advantages)
             (
-                self.agent_state,
+                self.actor_state,
+                self.critic_state,
                 variables_to_log,
                 self.permutation_key,
             ) = self.update_ppo(
-                self.agent_state,
+                self.actor_state,
+                self.critic_state,
                 buffer_with_returns,
                 self.permutation_key,
                 self.batch_size,
@@ -332,32 +434,38 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
 
     def update_ppo(
         self,
-        agent_state: AgentState,
+        actor_state: TrainState,
+        critic_state: TrainState,
         buffer: Buffer,
         key: random.PRNGKeyArray,
         batch_size: int,
         update_epochs: int = 4,
         num_minibatches: int = 4,
-    ) -> Tuple[AgentState, Dict[str, Array], random.PRNGKeyArray]:
+    ) -> Tuple[TrainState, TrainState, Dict[str, Array], random.PRNGKeyArray]:
         """Update PPO's agent state using the current content of the buffer and hyperparameters"""
         # Flatten collected experiences
-        observation_space_shape = (buffer.obs.shape[-1],)
-        action_space_shape = (buffer.actions.shape[-1],)
-        obs = buffer.obs.reshape((-1,) + observation_space_shape)
-        logprobs = buffer.logprobs.reshape(-1)
-        actions = buffer.actions.reshape((-1,) + action_space_shape)
-        advantages = buffer.advantages.reshape(-1)
-        returns = buffer.returns.reshape(-1)
-        values = buffer.values.reshape(-1)
-
+        obs, logprobs, actions, advantages, returns, values = get_flattened_experience(
+            buffer,
+            self.env.single_action_space.shape,
+            self.env.single_observation_space.shape,
+        )
         # Create function that will return gradient of the specified function
-        ppo_loss_grad_function = value_and_grad(ppo_loss, argnums=1, has_aux=True)
+        # ppo_loss_grad_function = jit(value_and_grad(ppo_loss, argnums=1, has_aux=True))
+
+        ppo_actor_loss_grad_function = jit(
+            value_and_grad(ppo_actor_loss, argnums=1, has_aux=True)
+        )
+        ppo_critic_loss_grad_function = jit(
+            value_and_grad(ppo_critic_loss, argnums=1, has_aux=False)
+        )
+        # ppo_loss_grad_function = jit(value_and_grad(ppo_loss, argnums=1, has_aux=True))
 
         minibatch_size = batch_size // num_minibatches
 
         for _ in range(update_epochs):
             key, subkey = random.split(key)
             b_inds = random.permutation(subkey, batch_size, independent=True)
+
             for start in range(0, batch_size, minibatch_size):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
@@ -369,33 +477,55 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
                     returns[mb_inds],
                     values[mb_inds],
                 )
-                (loss, (actor_loss, value_loss, entropy_loss, approx_kl)), grads = (
-                    ppo_loss_grad_function(
-                        agent_state,
-                        agent_state.params,
-                        buffer_trajectory_and_variables,
-                        self.clip_coef,
-                        self.vf_coef,
-                        self.entropy_coef,
-                    )
+                actor_loss = ppo_actor_loss(
+                    actor_state,
+                    actor_state.params,
+                    buffer_trajectory_and_variables,
+                    self.clip_coef,
+                    self.entropy_coef,
+                )
+
+                (
+                    actor_loss,
+                    (
+                        simple_actor_loss,
+                        entropy_loss,
+                        approx_kl,
+                        log_advantages,
+                        log_normalized_advantages,
+                    ),
+                ), actor_grads = ppo_actor_loss_grad_function(
+                    actor_state,
+                    actor_state.params,
+                    buffer_trajectory_and_variables,
+                    self.clip_coef,
+                    self.entropy_coef,
+                )
+                critic_loss, critic_grads = ppo_critic_loss_grad_function(
+                    critic_state,
+                    critic_state.params,
+                    buffer_trajectory_and_variables,
                 )
                 # Update an agent
-                agent_state = agent_state.apply_gradients(grads=grads)
+                actor_state = actor_state.apply_gradients(grads=actor_grads)
+                critic_state = critic_state.apply_gradients(grads=critic_grads)
 
-        # Calculate how good an approximation of the return is the value function
-        y_pred, y_true = values, returns
-        var_y = jnp.var(y_true)
-        explained_var = jnp.nan if var_y == 0 else 1 - jnp.var(y_true - y_pred) / var_y
+        explained_var = compute_explained_var(values, returns)
+
         variables_to_log = {
-            "loss": loss.item(),
             "actor_loss": actor_loss.item(),
-            "value_loss": value_loss.item(),
+            "simple_actor_loss": simple_actor_loss.item(),
+            "value_loss": critic_loss.item(),
             "entropy_loss": entropy_loss.item(),
             "kl-divergence": approx_kl.item(),
             "explained_var": explained_var,
+            "advantages": log_advantages,
+            "normalized_advantages": log_normalized_advantages,
+            "returns": buffer.returns,
         }
         return (
-            agent_state,
+            actor_state,
+            critic_state,
             variables_to_log,
             key,
         )
@@ -404,7 +534,7 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
 if __name__ == "__main__":
     num_envs = 4
     num_steps = 32
-    total_timesteps = int(2e4)
+    total_timesteps = int(5e4)
     train_envs = make_envs(
         "CartPole-v1",
         capture_video=False,
@@ -412,30 +542,33 @@ if __name__ == "__main__":
     )
     test_env = gym.make("CartPole-v1")
 
+    # agent = PPO(
+    #     seed=42,
+    #     num_envs=num_envs,
+    #     num_steps=num_steps,
+    #     env=train_envs,
+    #     learning_rate=3e-4,
+    #     logging_config=LoggingConfig(
+    #         project_name="test jaxppo", run_name="untrained", config={"test": "test"}
+    #     ),
+    # )
+    # rewards = agent.test(test_env, 10)
+    # del agent
+    # finish_logging()
     agent = PPO(
         seed=42,
         num_envs=num_envs,
-        num_steps=num_steps,
+        num_steps=128,
         env=train_envs,
-        learning_rate=3e-4,
-        logging_config=LoggingConfig(
-            project_name="test jaxppo", run_name="untrained", config={"test": "test"}
-        ),
-    )
-    rewards = agent.test(test_env, 10)
-    del agent
-
-    agent = PPO(
-        seed=42,
-        num_envs=num_envs,
-        num_steps=num_steps,
-        env=train_envs,
-        learning_rate=1e-3,
-        clip_coef=1.0,
+        learning_rate=1e-2,
+        clip_coef=0.2,
+        entropy_coef=0.00,
         logging_config=LoggingConfig(
             project_name="test jaxppo", run_name="trained", config={"test": "test"}
         ),
+        total_timesteps=total_timesteps,
     )
     agent.train(env=train_envs, total_timesteps=total_timesteps)
 
     rewards = agent.test(test_env, 10)
+    finish_logging()

@@ -51,15 +51,33 @@ def get_num_actions(env: Union[gym.Env, SyncVectorEnv]) -> int:
     return num_actions
 
 
-def linear_schedule(initial_learning_rate: float, decay: float, count: int) -> float:
+def linear_schedule(
+    count: int,
+    initial_learning_rate: float,
+    decay: float,
+) -> float:
     """Returns the updated learning rate given the initial one, the decay and the \
         count of timesteps since start"""
-    frac = 1 - (decay * count) / initial_learning_rate
+    return initial_learning_rate - (decay * count)
+
+
+def annealed_linear_schedule(
+    count: int,
+    initial_learning_rate: float,
+    num_minibatches: int,
+    update_epochs: int,
+    num_updates: int,
+) -> float:
+    """Compute the anneal learning rate for the given count of elapsed steps and\
+          hyperparameters"""
+    # anneal learning rate linearly after one training iteration which contains
+    # (args.num_minibatches * args.update_epochs) gradient updates
+    frac = 1.0 - (count // (num_minibatches * update_epochs)) / num_updates
     return initial_learning_rate * frac
 
 
 def get_parameterized_schedule(
-    linear_scheduler: Callable[[Any], float], **scheduler_kwargs: float
+    linear_scheduler: Callable[..., float], **scheduler_kwargs: Any
 ) -> Callable[[int], float]:
     """Generates a schedule fit to be given to optax optimizers by pre-setting \
         hyperparameters. It will then only need the step count as input, \
@@ -86,8 +104,12 @@ def _make_single_env(env_id: str, idx: int = 0, capture_video: bool = False):
     return thunk
 
 
-def make_envs(env_id: str, capture_video: bool, num_envs: int):
+def make_envs(env_id: str, capture_video: bool, num_envs: int) -> SyncVectorEnv:
     """Create a stack of num_envs environments (can also be used to create 1 env)"""
+    if isinstance(env_id, str):
+        return gym.vector.SyncVectorEnv(
+            [_make_single_env(env_id, i, capture_video) for i in range(num_envs)]
+        )
     return gym.vector.SyncVectorEnv(
-        [_make_single_env(env_id, i, capture_video) for i in range(num_envs)]
+        [lambda: env_id for i in range(num_envs)], copy=True
     )

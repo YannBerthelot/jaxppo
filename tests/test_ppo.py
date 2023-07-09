@@ -8,11 +8,12 @@ import pytest
 from jax import random
 
 from jaxppo.buffer import Buffer, init_buffer
-from jaxppo.networks import get_adam_tx, init_agent_state, init_networks
+from jaxppo.networks import get_adam_tx, init_actor_and_critic_state, init_networks
 from jaxppo.ppo import (
     PPO,
     get_logprob_and_action,
-    ppo_loss,
+    ppo_actor_loss,
+    ppo_critic_loss,
     predict_action_and_value_then_update_buffer,
 )
 from jaxppo.utils import get_env_action_shape, get_env_observation_shape, make_envs
@@ -48,15 +49,15 @@ def setup_agent_state():
     key = random.PRNGKey(42)
     key, actor_key, critic_key = random.split(key, num=3)
     tx = get_adam_tx()
-    agent_state = init_agent_state(
-        actor=actor,
-        critic=critic,
+    actor_state, critic_state = init_actor_and_critic_state(
+        actor_network=actor,
+        critic_network=critic,
         actor_key=actor_key,
         critic_key=critic_key,
         env=env,
         tx=tx,
     )
-    return agent_state, key
+    return actor_state, critic_state, key
 
 
 def test_get_logprob_and_action():
@@ -68,16 +69,15 @@ def test_get_logprob_and_action():
 
 
 def test_predict_action_and_value_then_update_buffer(setup_agent_state, setup_buffer):
-    agent_state, key = setup_agent_state
+    actor_state, critic_state, key = setup_agent_state
     buffer, envs, _, num_envs = setup_buffer
     obs = envs.reset()[0]
-    done = np.array([True, False, False, True])
     step = 0
     buffer, action, key = predict_action_and_value_then_update_buffer(
-        agent_state=agent_state,
+        actor_state=actor_state,
+        critic_state=critic_state,
         buffer=buffer,
         obs=obs,
-        done=done,
         key=key,
         step=step,
     )
@@ -87,7 +87,7 @@ def test_predict_action_and_value_then_update_buffer(setup_agent_state, setup_bu
 
 
 def test_rollout(setup_agent_state, setup_buffer):
-    agent_state, key = setup_agent_state
+    actor_state, critic_state, key = setup_agent_state
     buffer, envs, num_steps, num_envs = setup_buffer
     obs, _ = envs.reset()
     done = np.array([False for _ in range(num_envs)])
@@ -97,7 +97,8 @@ def test_rollout(setup_agent_state, setup_buffer):
 
     old_advantages = buffer.advantages
     _, _, buffer, key, envs = agent.rollout(
-        agent_state=agent_state,
+        actor_state=actor_state,
+        critic_state=critic_state,
         env=envs,
         num_steps=num_steps,
         obs=obs,
@@ -114,21 +115,39 @@ def test_train():
     num_steps = 2
     envs = make_envs("CartPole-v1", capture_video=False, num_envs=num_envs)
     agent = PPO(seed=42, num_envs=num_envs, num_steps=num_steps, env=envs)
-    old_params = agent.agent_state.params
+    old_actor_params = agent.actor_state.params
+    old_critic_params = agent.critic_state.params
     agent.train(env=envs, total_timesteps=int(16))
-    assert not jnp.array_equal(agent.agent_state.params, old_params)
+    assert not jnp.array_equal(agent.actor_state.params, old_actor_params)
+    assert not jnp.array_equal(agent.critic_state.params, old_critic_params)
 
 
-def test_ppo_loss_does_not_fail(setup_agent_state, setup_buffer):
-    agent_state, _ = setup_agent_state
+def test_ppo_actor_loss_does_not_fail(setup_agent_state, setup_buffer):
+    actor_state, _, _ = setup_agent_state
     _, envs, _, num_envs = setup_buffer
     obs = envs.reset()[0]
     action = envs.action_space.sample()
     logprob = jnp.array([0.5 for _ in range(num_envs)])
     step = (obs, action, logprob, logprob, logprob, logprob)
-    ppo_loss(
-        agent_state=agent_state,
-        agent_params=agent_state.params,
+    ppo_actor_loss(
+        actor_state=actor_state,
+        actor_params=actor_state.params,
+        trajectory_and_variables=step,
+        clip_coef=0.1,
+        ent_coef=0.01,
+    )
+
+
+def test_ppo_critic_loss_does_not_fail(setup_agent_state, setup_buffer):
+    _, critic_state, _ = setup_agent_state
+    _, envs, _, num_envs = setup_buffer
+    obs = envs.reset()[0]
+    action = envs.action_space.sample()
+    logprob = jnp.array([0.5 for _ in range(num_envs)])
+    step = (obs, action, logprob, logprob, logprob, logprob)
+    ppo_critic_loss(
+        critic_state=critic_state,
+        critic_params=critic_state.params,
         trajectory_and_variables=step,
     )
 

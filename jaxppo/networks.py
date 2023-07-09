@@ -5,9 +5,11 @@ import flax.linen as nn
 import gymnasium as gym
 import jax
 import jaxlib
+import numpy as np
 import optax
 from flax import struct
-from flax.core import FrozenDict, freeze
+from flax.core import FrozenDict
+from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jax import Array, random
 from numpy import ndarray
@@ -47,7 +49,11 @@ def parse_layer(
 ) -> Union[nn.Dense, ActivationFunction]:
     """Parse a layer representation into either a Dense or an activation function"""
     if str(layer).isnumeric():
-        return nn.Dense(int(cast(str, layer)))
+        return nn.Dense(
+            int(cast(str, layer)),
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+        )
     return parse_activation(activation=layer)
 
 
@@ -75,6 +81,7 @@ class Network(nn.Module):
             raise ValueError("Actor mode is selected but no num_of_actions provided")
         if self.actor and isinstance(self.num_of_actions, int):
             num_actions = self.num_of_actions
+            kernel_init = 0.01
         elif self.actor and not isinstance(self.num_of_actions, int):
             raise ValueError(
                 "Got unexpected num of actions :"
@@ -82,10 +89,15 @@ class Network(nn.Module):
             )
         else:
             num_actions = 1
+            kernel_init = 1
         return nn.Sequential(
             [
                 *parse_architecture(self.input_architecture),
-                nn.Dense(num_actions),
+                nn.Dense(
+                    num_actions,
+                    kernel_init=orthogonal(kernel_init),
+                    bias_init=constant(0.0),
+                ),
             ]
         )
 
@@ -134,12 +146,34 @@ def get_adam_tx(
     learning_rate: Union[float, Callable[[int], float]] = 1e-3,
     max_grad_norm: float = 0.5,
     eps: float = 1e-5,
+    clipped=True,
 ) -> GradientTransformationExtraArgs:
     """Return a clipped adam optimiser with the given parameters"""
-    return optax.chain(
-        optax.clip_by_global_norm(max_grad_norm),
-        optax.inject_hyperparams(optax.adamw)(learning_rate=learning_rate, eps=eps),
+    if clipped:
+        return optax.chain(
+            optax.clip_by_global_norm(max_grad_norm),
+            optax.inject_hyperparams(optax.adam)(learning_rate=learning_rate, eps=eps),
+        )
+    return optax.inject_hyperparams(optax.adam)(learning_rate=learning_rate, eps=eps)
+
+
+def init_actor_and_critic_state(
+    actor_network: Network,
+    critic_network: Network,
+    actor_key: random.PRNGKeyArray,
+    critic_key: random.PRNGKeyArray,
+    env: gym.Env,
+    tx: Union[GradientTransformationExtraArgs, GradientTransformation],
+) -> Tuple[TrainState, TrainState]:
+    """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
+    obs = env.reset()[0]
+    actor_params = actor_network.init(actor_key, obs)
+    critic_params = critic_network.init(critic_key, obs)
+    actor = TrainState.create(params=actor_params, tx=tx, apply_fn=actor_network.apply)
+    critic = TrainState.create(
+        params=critic_params, tx=tx, apply_fn=critic_network.apply
     )
+    return actor, critic
 
 
 def init_agent_state(
@@ -152,8 +186,8 @@ def init_agent_state(
 ) -> AgentState:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     obs = env.reset()[0]
-    actor_params = freeze(actor.init(actor_key, obs))
-    critic_params = freeze(critic.init(critic_key, obs))
+    actor_params = actor.init(actor_key, obs)
+    critic_params = critic.init(critic_key, obs)
     agent_params = AgentParams(actor_params=actor_params, critic_params=critic_params)
     return AgentState.create(
         params=agent_params,
@@ -166,14 +200,14 @@ def init_agent_state(
 
 
 def predict_value(
-    agent_state: AgentState, agent_params: AgentParams, obs: ndarray
+    critc_state: AgentState, critic_params: AgentParams, obs: ndarray
 ) -> Array:
     """Return the predicted value of the given obs with the current critic state"""
-    return agent_state.critic_fn(agent_params.critic_params, obs)  # type: ignore[attr-defined]
+    return critc_state.apply_fn(critic_params, obs)  # type: ignore[attr-defined]
 
 
 def predict_action_logits(
-    agent_state: AgentState, agent_params: AgentParams, obs: ndarray
+    actor_state: AgentState, actor_params: AgentParams, obs: ndarray
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
-    return agent_state.actor_fn(agent_params.actor_params, obs)  # type: ignore[attr-defined]
+    return actor_state.apply_fn(actor_params, obs)  # type: ignore[attr-defined]

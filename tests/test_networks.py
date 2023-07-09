@@ -13,6 +13,7 @@ from jax import random
 from jaxppo.networks import (
     Network,
     get_adam_tx,
+    init_actor_and_critic_state,
     init_agent_state,
     init_networks,
     predict_action_logits,
@@ -216,9 +217,9 @@ def test_predict_value():
     key = random.PRNGKey(42)
     actor_key, critic_key = random.split(key, num=2)
     tx = get_adam_tx()
-    agent_state = init_agent_state(
-        actor=actor,
-        critic=critic,
+    _, critic_state = init_actor_and_critic_state(
+        actor_network=actor,
+        critic_network=critic,
         actor_key=actor_key,
         critic_key=critic_key,
         env=env,
@@ -226,7 +227,7 @@ def test_predict_value():
     )
     obs = env.reset()[0]
     value = predict_value(
-        agent_state=agent_state, agent_params=agent_state.params, obs=obs
+        critc_state=critic_state, critic_params=critic_state.params, obs=obs
     )
     assert isinstance(value, jax.Array)
 
@@ -240,9 +241,9 @@ def test_predict_action_logits():
     key = random.PRNGKey(42)
     actor_key, critic_key = random.split(key, num=2)
     tx = get_adam_tx()
-    agent_state = init_agent_state(
-        actor=actor,
-        critic=critic,
+    actor_state, _ = init_actor_and_critic_state(
+        actor_network=actor,
+        critic_network=critic,
         actor_key=actor_key,
         critic_key=critic_key,
         env=env,
@@ -250,7 +251,7 @@ def test_predict_action_logits():
     )
     obs = env.reset()[0]
     logits = predict_action_logits(
-        agent_state=agent_state, agent_params=agent_state.params, obs=obs
+        actor_state=actor_state, actor_params=actor_state.params, obs=obs
     )
     assert isinstance(logits, jax.Array)
     assert len(logits) == get_num_actions(env)

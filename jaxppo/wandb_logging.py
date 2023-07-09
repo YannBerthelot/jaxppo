@@ -28,3 +28,8 @@ def log_variables(variables_to_log: dict, commit: bool = False):
     """Log variables (in form of a dict of names and values) into wandb.
     Commit to finish a step."""
     wandb.log(variables_to_log, commit=commit)
+
+
+def finish_logging():
+    """Terminate the wandb run to start a new one"""
+    wandb.finish()
