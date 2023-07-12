@@ -7,15 +7,17 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-jax = "^0.4.13"
-flax = "^0.6.11"
 gymnasium = "^0.28.1"
-optax = "^0.1.5"
 numpy = "^1.25.0"
 tensorflow-probability = "^0.20.1"
 tqdm = "^4.65.0"
+jax = "^0.4.13"
+jaxlib = "^0.4.13"
+flax = "^0.7.0"
+chex = "0.1.81"
+gymnax = "^0.0.6"
+appdirs = "1.4.3"
 wandb = "^0.15.5"
-probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments"}
 
 
 [tool.poetry.group.dev.dependencies]
@@ -27,7 +29,7 @@ tox = "^4.6.3"
 coverage = "^7.2.7"
 pre-commit = "^3.3.3"
 pytest = "7.4.0"
-probing-environments = "0.4.0"
+probing-environments = "^0.4.0"
 
 
 [[tool.poetry.source]]
@@ -52,6 +54,8 @@ max-line-length = 88
 legacy_tox_ini = """
 
 [tox]
+indexserver =
+    default = https://test.pypi.org/simple/
 isolated_build = True
 envlist =
     py311
@@ -63,7 +67,7 @@ extras =
     rlberry
     sb3
 deps = pyproject.toml
-allowlist_externals = pytest
+allowlist_externals = pytest, probing_environments
 changedir = {envtmpdir}  # Move elsewhere to ensure pytest doesn't run from source root.
 commands =
     pytest {toxinidir}
@@ -72,7 +76,10 @@ commands =
 deps = pre-commit
 commands = pre-commit run --all-files
 
+
 [testenv:coverage]
+allowlist_externals = pytest, probing-environments, poetry
+skip_install = true
 extras = 
     rlberry
     sb3
@@ -81,9 +88,10 @@ deps =
     pyproject.toml
     pytest
 commands =
-    coverage run --source=jaxppo --branch -m pytest {toxinidir}
-    coverage report -m --fail-under 80
-    coverage xml -o {toxinidir}/coverage.xml
+    poetry install
+    poetry run coverage run --source=jaxppo --branch -m pytest {toxinidir}
+    poetry run coverage report -m --fail-under 80
+    poetry run coverage xml -o {toxinidir}/coverage.xml
 
 [gh-actions]
 python =
