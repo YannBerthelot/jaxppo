@@ -339,6 +339,7 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
             buffer = insert_buffer(buffer, step, dones=done)
 
             # gym
+
             vmap_step = jax.vmap(env.step, in_axes=(0, 0, 0, None))
             obs, env_state, reward, done, infos = vmap_step(
                 step_key, env_state, device_get(action.squeeze()), self.env_params
@@ -562,7 +563,6 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
 
 if __name__ == "__main__":
     num_envs = 4
-    num_steps = 32
     total_timesteps = int(5e4)
     train_env, train_env_params, keys = make_gymnax_env("CartPole-v1", seed=42)
     test_env = gym.make("CartPole-v1")
@@ -572,9 +572,9 @@ if __name__ == "__main__":
         num_steps=128,
         env=train_env,
         env_params=train_env_params,
-        learning_rate=1e-2,
+        learning_rate=5e-4,
         clip_coef=0.2,
-        entropy_coef=0.00,
+        entropy_coef=0.01,
         logging_config=LoggingConfig(
             project_name="test jaxppo", run_name="trained", config={"test": "test"}
         ),

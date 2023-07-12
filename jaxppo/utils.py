@@ -9,16 +9,17 @@ from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from gymnax import EnvParams
 from gymnax.environments.environment import Environment
 from jax import random
+from jaxppo.wrappers import LogWrapper
 
 
 def get_env_action_shape(
-    env: Union[gym.Env, SyncVectorEnv, Environment]
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
 ) -> tuple[int] | tuple:
     """
     Get the shape of the action space of a gym env
     (Number of actions if discrete, else the shape of the continuous actions)
     """
-    if isinstance(env, Environment):
+    if isinstance(env, (Environment, LogWrapper)):
         action_space = env.action_space()
     else:
         action_space = (
@@ -34,12 +35,12 @@ def get_env_action_shape(
 
 
 def get_env_observation_shape(
-    env: gym.Env | SyncVectorEnv | Environment, env_params=None
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper, env_params=None
 ) -> Tuple[int]:
     """
     Get the shape of the observation space of a gym env (or Vec Env)
     """
-    if isinstance(env, Environment):
+    if isinstance(env, (Environment, LogWrapper)):
         if env_params is None:
             raise ValueError("No env params provided for gymnax env")
         observation_space = env.observation_space(env_params)
@@ -54,10 +55,11 @@ def get_env_observation_shape(
 
 
 def sample_obs_space(
-    env: Environment | gym.Env | SyncVectorEnv, env_params: EnvParams = None
+    env: Environment | gym.Env | SyncVectorEnv | LogWrapper,
+    env_params: EnvParams = None,
 ) -> Any:
     """Sample an action from an environment"""
-    if isinstance(env, Environment):
+    if isinstance(env, (Environment, LogWrapper)):
         key = random.PRNGKey(42)
         return env.observation_space(env_params).sample(key)
     else:
@@ -69,9 +71,11 @@ def sample_obs_space(
         return observation_space.sample()
 
 
-def get_num_actions(env: gym.Env | SyncVectorEnv | Environment) -> int:
+def get_num_actions(
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
+) -> int:
     """Get the number of actions (discrete or continuous) in a gym env"""
-    if isinstance(env, Environment):
+    if isinstance(env, (Environment, LogWrapper)):
         action_space = env.action_space()
     else:
         action_space = (

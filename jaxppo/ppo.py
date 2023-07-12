@@ -533,8 +533,8 @@ class PPO:  # pylint: disable=R0902, R0913, R0914
 
 if __name__ == "__main__":
     num_envs = 4
-    num_steps = 32
-    total_timesteps = int(5e4)
+    num_steps = 128
+    total_timesteps = int(1e6)
     train_envs = make_envs(
         "CartPole-v1",
         capture_video=False,
@@ -560,9 +560,9 @@ if __name__ == "__main__":
         num_envs=num_envs,
         num_steps=128,
         env=train_envs,
-        learning_rate=1e-2,
+        learning_rate=2.5e-4,
         clip_coef=0.2,
-        entropy_coef=0.00,
+        entropy_coef=0.01,
         logging_config=LoggingConfig(
             project_name="test jaxppo", run_name="trained", config={"test": "test"}
         ),
@@ -570,5 +570,5 @@ if __name__ == "__main__":
     )
     agent.train(env=train_envs, total_timesteps=total_timesteps)
 
-    rewards = agent.test(test_env, 10)
+    # rewards = agent.test(test_env, 10)
     finish_logging()

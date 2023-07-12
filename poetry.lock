@@ -371,6 +371,26 @@ files = [
 ]
 
 [[package]]
+name = "distrax"
+version = "0.1.4"
+description = "Distrax: Probability distributions in JAX."
+category = "main"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "distrax-0.1.4-py3-none-any.whl", hash = "sha256:20bca3ed4a2e6684c861e59f7f49e94d00939f1ce7de9ba445dd4195b449e762"},
+    {file = "distrax-0.1.4.tar.gz", hash = "sha256:9255d3e707e759418cadfe6c42162acfb16873f3aee72e0620582d4df7f56454"},
+]
+
+[package.dependencies]
+absl-py = ">=0.9.0"
+chex = ">=0.1.8"
+jax = ">=0.1.55"
+jaxlib = ">=0.1.67"
+numpy = ">=1.23.0"
+tensorflow-probability = ">=0.15.0"
+
+[[package]]
 name = "dm-tree"
 version = "0.1.8"
 description = "Tree is a library for working with nested data structures."
@@ -1979,4 +1999,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "9a7675b77220163ca7093c0f8736943a6f930a98a6f478724b96219c37493dd9"
+content-hash = "46e8c43cb727f6a29427b481952bc1c570293d850d5042886e9829234f09f13c"

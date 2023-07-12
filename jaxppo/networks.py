@@ -7,6 +7,7 @@ import jax
 import jaxlib
 import numpy as np
 import optax
+import jax.numpy as jnp
 from flax import struct
 from flax.core import FrozenDict
 from flax.linen.initializers import constant, orthogonal
@@ -14,7 +15,7 @@ from flax.training.train_state import TrainState
 from jax import Array, random
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
-
+import distrax
 from jaxppo.utils import get_num_actions, sample_obs_space
 
 ActivationFunction: TypeAlias = Union[
@@ -73,6 +74,8 @@ class Network(nn.Module):
     input_architecture: Sequence[Union[str, ActivationFunction]]
     actor: bool
     num_of_actions: Optional[int] = None
+    squeeze_value: bool = False
+    categorical_output: bool = False
 
     @property
     def architecture(self) -> nn.Sequential:
@@ -90,26 +93,45 @@ class Network(nn.Module):
         else:
             num_actions = 1
             kernel_init = 1
-        return nn.Sequential(
-            [
-                *parse_architecture(self.input_architecture),
-                nn.Dense(
-                    num_actions,
-                    kernel_init=orthogonal(kernel_init),
-                    bias_init=constant(0.0),
-                ),
-            ]
-        )
+        if self.actor:
+            return nn.Sequential(
+                [
+                    *parse_architecture(self.input_architecture),
+                    nn.Dense(
+                        num_actions,
+                        kernel_init=orthogonal(kernel_init),
+                        bias_init=constant(0.0),
+                    ),
+                    distrax.Categorical,
+                ]
+            )
+        else:
+            return nn.Sequential(
+                [
+                    *parse_architecture(self.input_architecture),
+                    nn.Dense(
+                        num_actions,
+                        kernel_init=orthogonal(kernel_init),
+                        bias_init=constant(0.0),
+                    ),
+                ]
+            )
 
     @nn.compact
     def __call__(self, x: Array):
-        return self.architecture(x)
+        return (
+            self.architecture(x)
+            if not (self.squeeze_value)
+            else jnp.squeeze(self.architecture(x), axis=-1)
+        )
 
 
 def init_networks(
     env: gym.Env,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
     critic_architecture: Sequence[Union[str, ActivationFunction]],
+    squeeze_value: bool = False,
+    categorical_output: bool = False,
 ) -> Tuple[Network, Network]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
@@ -118,10 +140,10 @@ def init_networks(
         input_architecture=actor_architecture,
         actor=True,
         num_of_actions=num_actions,
+        categorical_output=categorical_output,
     )
     critic = Network(
-        input_architecture=critic_architecture,
-        actor=False,
+        input_architecture=critic_architecture, actor=False, squeeze_value=squeeze_value
     )
     return actor, critic
 
