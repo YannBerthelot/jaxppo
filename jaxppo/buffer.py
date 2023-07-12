@@ -22,8 +22,8 @@ class Buffer(struct.PyTreeNode):  # type : ignore
 def init_buffer(
     num_steps: int,
     num_envs: int,
-    observation_space_shape: Tuple[int],
-    action_space_shape: Tuple[int],
+    observation_space_shape: Tuple[int] | tuple,
+    action_space_shape: Tuple[int] | tuple,
 ) -> Buffer:
     """Init the buffer with zero arrays of the right dimension for all values to \
         track"""

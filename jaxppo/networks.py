@@ -15,7 +15,7 @@ from jax import Array, random
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
 
-from jaxppo.utils import get_num_actions
+from jaxppo.utils import get_num_actions, sample_obs_space
 
 ActivationFunction: TypeAlias = Union[
     jax._src.custom_derivatives.custom_jvp, jaxlib.xla_extension.PjitFunction
@@ -164,9 +164,10 @@ def init_actor_and_critic_state(
     critic_key: random.PRNGKeyArray,
     env: gym.Env,
     tx: Union[GradientTransformationExtraArgs, GradientTransformation],
+    env_params=None,
 ) -> Tuple[TrainState, TrainState]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
-    obs = env.reset()[0]
+    obs = sample_obs_space(env, env_params)
     actor_params = actor_network.init(actor_key, obs)
     critic_params = critic_network.init(critic_key, obs)
     actor = TrainState.create(params=actor_params, tx=tx, apply_fn=actor_network.apply)

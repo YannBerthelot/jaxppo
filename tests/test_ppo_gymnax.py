@@ -1,7 +1,7 @@
 # pylint: disable = missing-function-docstring, missing-module-docstring
 from math import log
 
-import gymnasium as gym
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,23 +9,27 @@ from jax import random
 
 from jaxppo.buffer import Buffer, init_buffer
 from jaxppo.networks import get_adam_tx, init_actor_and_critic_state, init_networks
-from jaxppo.ppo import (
+from jaxppo.ppo_gymnax import (
     PPO,
     get_logprob_and_action,
     ppo_actor_loss,
     ppo_critic_loss,
     predict_action_and_value_then_update_buffer,
 )
-from jaxppo.utils import get_env_action_shape, get_env_observation_shape, make_envs
+from jaxppo.utils import (
+    get_env_action_shape,
+    get_env_observation_shape,
+    make_gymnax_env,
+)
 
 
 @pytest.fixture
 def setup_buffer():
     n_steps = 4
     n_envs = 4
-    envs = make_envs("CartPole-v1", capture_video=False, num_envs=n_envs)
-    action_space_shape = get_env_action_shape(envs)
-    observation_space_shape = get_env_observation_shape(envs)
+    train_env, train_env_params, _ = make_gymnax_env("CartPole-v1", seed=42)
+    action_space_shape = get_env_action_shape(train_env)
+    observation_space_shape = get_env_observation_shape(train_env, train_env_params)
     return (
         init_buffer(
             num_steps=n_steps,
@@ -33,7 +37,8 @@ def setup_buffer():
             action_space_shape=action_space_shape,
             observation_space_shape=observation_space_shape,
         ),
-        envs,
+        train_env,
+        train_env_params,
         n_steps,
         n_envs,
     )
@@ -41,7 +46,7 @@ def setup_buffer():
 
 @pytest.fixture
 def setup_agent_state():
-    env = gym.make("CartPole-v1")
+    env, env_params, _ = make_gymnax_env("CartPole-v1", seed=42)
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
     actor, critic = init_networks(env, actor_architecture, critic_architecture)
@@ -56,6 +61,7 @@ def setup_agent_state():
         critic_key=critic_key,
         env=env,
         tx=tx,
+        env_params=env_params,
     )
     return actor_state, critic_state, key
 
@@ -70,14 +76,14 @@ def test_get_logprob_and_action():
 
 def test_predict_action_and_value_then_update_buffer(setup_agent_state, setup_buffer):
     actor_state, critic_state, key = setup_agent_state
-    buffer, envs, _, num_envs = setup_buffer
-    obs = envs.reset()[0]
+    buffer, envs, envs_params, _, num_envs = setup_buffer
+    obs, _ = envs.reset(key, envs_params)
     step = 0
     buffer, action, key = predict_action_and_value_then_update_buffer(
         actor_state=actor_state,
         critic_state=critic_state,
         buffer=buffer,
-        obs=obs,
+        obs=jnp.array([obs for _ in range(num_envs)]),
         key=key,
         step=step,
     )
@@ -86,17 +92,20 @@ def test_predict_action_and_value_then_update_buffer(setup_agent_state, setup_bu
     assert len(action) == num_envs
 
 
-def test_rollout(setup_agent_state, setup_buffer):
+def test_rollout(setup_agent_state, setup_buffer):  # pylint: disable=R0914
     actor_state, critic_state, key = setup_agent_state
-    buffer, envs, num_steps, num_envs = setup_buffer
+    buffer, envs, env_params, num_steps, num_envs = setup_buffer
 
     done = np.array([False for _ in range(num_envs)])
 
-    envs = make_envs("CartPole-v1", capture_video=False, num_envs=num_envs)
-    agent = PPO(seed=42, num_envs=num_envs, num_steps=num_steps, env=envs)
-    obs, _ = envs.reset()
+    agent = PPO(
+        seed=42, num_envs=num_envs, num_steps=num_steps, env=envs, env_params=env_params
+    )
+    vmap_reset = jax.vmap(envs.reset, in_axes=(0, None))
+    vmap_keys = jax.random.split(key, num_envs)
+    obs, env_state = vmap_reset(vmap_keys, env_params)
     old_advantages = buffer.advantages
-    _, _, buffer, key, envs = agent.rollout(
+    _, _, buffer, key, envs, env_state = agent.rollout(
         actor_state=actor_state,
         critic_state=critic_state,
         env=envs,
@@ -105,6 +114,8 @@ def test_rollout(setup_agent_state, setup_buffer):
         done=done,
         buffer=buffer,
         key=key,
+        env_state=env_state,
+        step_key=vmap_keys,
     )
     assert jnp.array_equal(buffer.obs[0], obs)
     assert jnp.array_equal(buffer.advantages, old_advantages)
@@ -113,20 +124,26 @@ def test_rollout(setup_agent_state, setup_buffer):
 def test_train():
     num_envs = 2
     num_steps = 2
-    envs = make_envs("CartPole-v1", capture_video=False, num_envs=num_envs)
-    agent = PPO(seed=42, num_envs=num_envs, num_steps=num_steps, env=envs)
+    train_env, train_env_params, _ = make_gymnax_env("CartPole-v1", seed=42)
+    agent = PPO(
+        seed=42,
+        num_envs=num_envs,
+        num_steps=num_steps,
+        env=train_env,
+        env_params=train_env_params,
+    )
     old_actor_params = agent.actor_state.params
     old_critic_params = agent.critic_state.params
-    agent.train(env=envs, total_timesteps=int(16))
+    agent.train(env=train_env, total_timesteps=int(16))
     assert not jnp.array_equal(agent.actor_state.params, old_actor_params)
     assert not jnp.array_equal(agent.critic_state.params, old_critic_params)
 
 
 def test_ppo_actor_loss_does_not_fail(setup_agent_state, setup_buffer):
-    actor_state, _, _ = setup_agent_state
-    _, envs, _, num_envs = setup_buffer
-    obs = envs.reset()[0]
-    action = envs.action_space.sample()
+    actor_state, _, key = setup_agent_state
+    _, envs, env_params, _, num_envs = setup_buffer
+    obs, _ = envs.reset(key, env_params)
+    action = jnp.array([envs.action_space().sample(key) for _ in range(num_envs)])
     logprob = jnp.array([0.5 for _ in range(num_envs)])
     step = (obs, action, logprob, logprob, logprob, logprob)
     ppo_actor_loss(
@@ -139,10 +156,10 @@ def test_ppo_actor_loss_does_not_fail(setup_agent_state, setup_buffer):
 
 
 def test_ppo_critic_loss_does_not_fail(setup_agent_state, setup_buffer):
-    _, critic_state, _ = setup_agent_state
-    _, envs, _, num_envs = setup_buffer
-    obs = envs.reset()[0]
-    action = envs.action_space.sample()
+    _, critic_state, key = setup_agent_state
+    _, envs, env_params, _, num_envs = setup_buffer
+    obs, _ = envs.reset(key, env_params)
+    action = envs.action_space().sample(key)
     logprob = jnp.array([0.5 for _ in range(num_envs)])
     step = (obs, action, logprob, logprob, logprob, logprob)
     ppo_critic_loss(

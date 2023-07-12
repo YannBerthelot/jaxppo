@@ -216,7 +216,7 @@ def test_check_actor_and_critic_coupling():
         train_agent,
         get_policy,
         get_value,
-        learning_rate=LEARNING_RATE,
+        learning_rate=LEARNING_RATE / 10,
         budget=BUDGET,
         num_envs=2,
     )
