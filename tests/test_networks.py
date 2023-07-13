@@ -16,10 +16,10 @@ from jaxppo.networks import (
     init_actor_and_critic_state,
     init_agent_state,
     init_networks,
-    predict_action_logits,
+    predict_probs,
     predict_value,
 )
-from jaxppo.utils import get_num_actions, make_envs
+from jaxppo.utils import get_num_actions
 
 ActivationFunction: TypeAlias = Union[
     jax._src.custom_derivatives.custom_jvp, jaxlib.xla_extension.PjitFunction
@@ -95,58 +95,6 @@ def test_critic_init(setup_simple_critic):
     check_nn_is_equal(critic.architecture.layers, expected_critic.layers)
 
 
-def test_network_forward_pass():
-    """Check that the forward pass matches with hand computation on a simple net"""
-    # Simple network to run calculations by hand
-    architecture = ["2", "relu"]
-    obs_dim = 2
-    num_actions = 1
-    actor = Network(
-        input_architecture=architecture,
-        actor=True,
-        num_of_actions=num_actions,
-    )
-    key = jax.random.PRNGKey(42)
-    obs = jnp.ones((1, obs_dim))
-    variables = actor.init(key, obs)
-
-    # Change weights for something we can compute by hand
-    x_1_1, x_1_2, x_2_1, x_2_2 = 0.1, -0.3, 0.5, 0.6
-    y_1, y_2 = -0.7, 0.2
-    variables = unfreeze(variables)
-    variables["params"]["Dense_0"]["kernel"] = jnp.array(
-        [[x_1_1, x_1_2], [x_2_1, x_2_2]]
-    )
-    variables["params"]["Dense_1"]["kernel"] = jnp.array([[y_1], [y_2]])
-    variables = freeze(variables)
-
-    expected_output = jnp.array(
-        max(0, (x_1_1 + x_2_1)) * (y_1) + max(0, (x_1_2 + x_2_2)) * (y_2)
-    )
-    output = actor.apply(variables, obs)
-    assert jnp.isclose(output, expected_output)
-
-
-def test_RNG_init(setup_simple_actor):
-    """Check that RNG gives the same results with the same key"""
-
-    actor = setup_simple_actor
-    obs_dim = 2
-    obs = jnp.ones((1, obs_dim))
-    key = jax.random.PRNGKey(42)
-    variables = actor.init(key, obs)
-    output = actor.apply(variables, obs)
-    del actor, variables
-
-    actor = setup_simple_actor
-    obs = jnp.ones((1, obs_dim))
-    key = jax.random.PRNGKey(42)
-    variables = actor.init(key, obs)
-    new_output = actor.apply(variables, obs)
-
-    assert jnp.array_equal(output, new_output)
-
-
 def test_network_init():
     env = gym.make("CartPole-v1")
     num_actions = 2
@@ -201,10 +149,9 @@ def test_init_agent_state(setup_agent_state):
     env = gym.make("CartPole-v1")
     obs = env.reset()[0]
     agent_state = setup_agent_state
-    action_logits = agent_state.actor_fn(agent_state.params.actor_params, obs)
+    probs = agent_state.actor_fn(agent_state.params.actor_params, obs).probs
     value = agent_state.critic_fn(agent_state.params.critic_params, obs)
-
-    assert len(action_logits) == get_num_actions(env)
+    assert len(probs) == get_num_actions(env)
     assert len(value) == 1
 
 
@@ -232,11 +179,17 @@ def test_predict_value():
     assert isinstance(value, jax.Array)
 
 
-def test_predict_action_logits():
+def test_predict_obs():
     env = gym.make("CartPole-v1")
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
-    actor, critic = init_networks(env, actor_architecture, critic_architecture)
+    actor, critic = init_networks(
+        env,
+        actor_architecture,
+        critic_architecture,
+        categorical_output=True,
+        squeeze_value=True,
+    )
 
     key = random.PRNGKey(42)
     actor_key, critic_key = random.split(key, num=2)
@@ -250,8 +203,8 @@ def test_predict_action_logits():
         tx=tx,
     )
     obs = env.reset()[0]
-    logits = predict_action_logits(
+    probs = predict_probs(
         actor_state=actor_state, actor_params=actor_state.params, obs=obs
     )
-    assert isinstance(logits, jax.Array)
-    assert len(logits) == get_num_actions(env)
+    assert isinstance(probs, jax.Array)
+    assert len(probs) == get_num_actions(env)

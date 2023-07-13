@@ -1,17 +1,19 @@
+"""Wrappers for environment"""
+from functools import partial
+from typing import Optional, Tuple, Union
+
+import chex
 import jax
 import jax.numpy as jnp
-import chex
 import numpy as np
 from flax import struct
-from functools import partial
-from typing import Optional, Tuple, Union, Any
 from gymnax.environments import environment, spaces
 
 
-class GymnaxWrapper(object):
+class GymnaxWrapper:
     """Base class for Gymnax wrappers."""
 
-    def __init__(self, env):
+    def __init__(self, env: environment.Environment):
         self._env = env
 
     # provide proxy access to regular attributes of wrapped object
@@ -22,10 +24,8 @@ class GymnaxWrapper(object):
 class FlattenObservationWrapper(GymnaxWrapper):
     """Flatten the observations of the environment."""
 
-    def __init__(self, env: environment.Environment):
-        super().__init__(env)
-
     def observation_space(self, params) -> spaces.Box:
+        """Get the observation space from a gymnax env given its params"""
         assert isinstance(
             self._env.observation_space(params), spaces.Box
         ), "Only Box spaces are supported for now."
@@ -40,6 +40,7 @@ class FlattenObservationWrapper(GymnaxWrapper):
     def reset(
         self, key: chex.PRNGKey, params: Optional[environment.EnvParams] = None
     ) -> Tuple[chex.Array, environment.EnvState]:
+        """Reset the environment and flatten the observation"""
         obs, state = self._env.reset(key, params)
         obs = jnp.reshape(obs, (-1,))
         return obs, state
@@ -52,6 +53,7 @@ class FlattenObservationWrapper(GymnaxWrapper):
         action: Union[int, float],
         params: Optional[environment.EnvParams] = None,
     ) -> Tuple[chex.Array, environment.EnvState, float, bool, dict]:
+        """Step the environment and flatten the observation"""
         obs, state, reward, done, info = self._env.step(key, state, action, params)
         obs = jnp.reshape(obs, (-1,))
         return obs, state, reward, done, info
@@ -59,6 +61,8 @@ class FlattenObservationWrapper(GymnaxWrapper):
 
 @struct.dataclass
 class LogEnvState:
+    """Logging buffer"""
+
     env_state: environment.EnvState
     episode_returns: float
     episode_lengths: int
@@ -70,15 +74,13 @@ class LogEnvState:
 class LogWrapper(GymnaxWrapper):
     """Log the episode returns and lengths."""
 
-    def __init__(self, env: environment.Environment):
-        super().__init__(env)
-
     @partial(jax.jit, static_argnums=(0,))
     def reset(
         self, key: chex.PRNGKey, params: Optional[environment.EnvParams] = None
     ) -> Tuple[chex.Array, environment.EnvState]:
+        """Reset the environment and log the state of the env"""
         obs, env_state = self._env.reset(key, params)
-        state = LogEnvState(env_state, 0, 0, 0, 0, 0)
+        state = LogEnvState(env_state, 0, 0, 0, 0, 0)  # type: ignore[call-arg]
         return obs, state
 
     @partial(jax.jit, static_argnums=(0,))
@@ -89,12 +91,13 @@ class LogWrapper(GymnaxWrapper):
         action: Union[int, float],
         params: Optional[environment.EnvParams] = None,
     ) -> Tuple[chex.Array, environment.EnvState, float, bool, dict]:
+        """Step the environment and log the env state, episode return, episode length and timestep"""
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action, params
         )
         new_episode_return = state.episode_returns + reward
         new_episode_length = state.episode_lengths + 1
-        state = LogEnvState(
+        state = LogEnvState(  # type: ignore[call-arg]
             env_state=env_state,
             episode_returns=new_episode_return * (1 - done),
             episode_lengths=new_episode_length * (1 - done),
@@ -112,44 +115,58 @@ class LogWrapper(GymnaxWrapper):
 
 
 class ClipAction(GymnaxWrapper):
+    """Continus action clipping wrapper"""
+
     def __init__(self, env, low=-1.0, high=1.0):
+        """Set the high and low bounds"""
         super().__init__(env)
         self.low = low
         self.high = high
 
     def step(self, key, state, action, params=None):
-        """TODO: In theory the below line should be the way to do this."""
+        """Step the environment while clipping the action first"""
         # action = jnp.clip(action, self.env.action_space.low, self.env.action_space.high)
         action = jnp.clip(action, self.low, self.high)
         return self._env.step(key, state, action, params)
 
 
 class TransformObservation(GymnaxWrapper):
+    """Observation modifying wrapper"""
+
     def __init__(self, env, transform_obs):
+        """Set the observation transformation"""
         super().__init__(env)
         self.transform_obs = transform_obs
 
     def reset(self, key, params=None):
+        """Reset the env and return the transformed obs"""
         obs, state = self._env.reset(key, params)
         return self.transform_obs(obs), state
 
     def step(self, key, state, action, params=None):
+        """Step the env and return the transformed obs"""
         obs, state, reward, done, info = self._env.step(key, state, action, params)
         return self.transform_obs(obs), state, reward, done, info
 
 
 class TransformReward(GymnaxWrapper):
+    """Reward modifying wrapper"""
+
     def __init__(self, env, transform_reward):
         super().__init__(env)
         self.transform_reward = transform_reward
 
     def step(self, key, state, action, params=None):
+        """Step the env and return the transformed reward"""
         obs, state, reward, done, info = self._env.step(key, state, action, params)
         return obs, state, self.transform_reward(reward), done, info
 
 
 class VecEnv(GymnaxWrapper):
+    """Vectorized an environment by vectorizing step and reset"""
+
     def __init__(self, env):
+        """Override reset and step"""
         super().__init__(env)
         self.reset = jax.vmap(self._env.reset, in_axes=(0, None))
         self.step = jax.vmap(self._env.step, in_axes=(0, 0, 0, None))
@@ -157,6 +174,8 @@ class VecEnv(GymnaxWrapper):
 
 @struct.dataclass
 class NormalizeVecObsEnvState:
+    """Carry variables necessary for online normalization"""
+
     mean: jnp.ndarray
     var: jnp.ndarray
     count: float
@@ -164,10 +183,10 @@ class NormalizeVecObsEnvState:
 
 
 class NormalizeVecObservation(GymnaxWrapper):
-    def __init__(self, env):
-        super().__init__(env)
+    """Wrapper for online normalization of observations"""
 
     def reset(self, key, params=None):
+        """Reset the environment and return the normalized obs"""
         obs, state = self._env.reset(key, params)
         state = NormalizeVecObsEnvState(
             mean=jnp.zeros_like(obs),
@@ -199,6 +218,7 @@ class NormalizeVecObservation(GymnaxWrapper):
         return (obs - state.mean) / jnp.sqrt(state.var + 1e-8), state
 
     def step(self, key, state, action, params=None):
+        """Step the environment and return the normalized obs"""
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action, params
         )
@@ -234,6 +254,8 @@ class NormalizeVecObservation(GymnaxWrapper):
 
 @struct.dataclass
 class NormalizeVecRewEnvState:
+    """Carry variables necessary for online normalization"""
+
     mean: jnp.ndarray
     var: jnp.ndarray
     count: float
@@ -242,11 +264,15 @@ class NormalizeVecRewEnvState:
 
 
 class NormalizeVecReward(GymnaxWrapper):
+    """Wrapper for online normalization of rewards"""
+
     def __init__(self, env, gamma):
+        """Set gamma"""
         super().__init__(env)
         self.gamma = gamma
 
     def reset(self, key, params=None):
+        """Reset the environment and return the normalized reward"""
         obs, state = self._env.reset(key, params)
         batch_count = obs.shape[0]
         state = NormalizeVecRewEnvState(
@@ -259,6 +285,7 @@ class NormalizeVecReward(GymnaxWrapper):
         return obs, state
 
     def step(self, key, state, action, params=None):
+        """Step the environment and return the normalized reward"""
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action, params
         )

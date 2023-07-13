@@ -1,13 +1,14 @@
 """Networks initialization"""
 from typing import Callable, Optional, Sequence, Tuple, TypeAlias, Union, cast, get_args
 
+import distrax
 import flax.linen as nn
 import gymnasium as gym
 import jax
+import jax.numpy as jnp
 import jaxlib
 import numpy as np
 import optax
-import jax.numpy as jnp
 from flax import struct
 from flax.core import FrozenDict
 from flax.linen.initializers import constant, orthogonal
@@ -15,7 +16,7 @@ from flax.training.train_state import TrainState
 from jax import Array, random
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
-import distrax
+
 from jaxppo.utils import get_num_actions, sample_obs_space
 
 ActivationFunction: TypeAlias = Union[
@@ -229,8 +230,8 @@ def predict_value(
     return critc_state.apply_fn(critic_params, obs)  # type: ignore[attr-defined]
 
 
-def predict_action_logits(
+def predict_probs(
     actor_state: AgentState, actor_params: AgentParams, obs: ndarray
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
-    return actor_state.apply_fn(actor_params, obs)  # type: ignore[attr-defined]
+    return actor_state.apply_fn(actor_params, obs).probs  # type: ignore[attr-defined]
