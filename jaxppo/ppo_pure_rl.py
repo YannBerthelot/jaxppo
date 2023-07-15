@@ -23,6 +23,7 @@ from jaxppo.wandb_logging import (
     LoggingConfig,
     finish_logging,
     init_logging,
+    log_variables,
     wandb_log,
     wandb_test_log,
 )
@@ -240,6 +241,7 @@ def _update_minbatch_pre_partial(
     ent_coef: float,
     clip_coef: float,
     critic_network: Network,
+    log: bool,
 ) -> tuple[
     tuple[TrainState, TrainState], tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ]:
@@ -254,6 +256,7 @@ def _update_minbatch_pre_partial(
         ent_coef (float): The entropy coefficient for the actor loss.
         clip_coef (float): PPO's clipping coefficient.
         critic_network (Network): The critic/value network.
+        log (bool): Wether or not to log losses in wandb
 
     Returns:
         tuple[ tuple[TrainState, TrainState], \
@@ -283,6 +286,17 @@ def _update_minbatch_pre_partial(
     actor_state = actor_state.apply_gradients(grads=actor_grads)
     critic_state = critic_state.apply_gradients(grads=critic_grads)
     losses = (actor_loss, critic_loss, simple_actor_loss, entropy_loss)
+    if log:
+        jax.debug.callback(
+            log_variables,
+            {
+                "Losses/actor_loss": actor_loss,
+                "Losses/critic_loss": critic_loss,
+                "Losses/Simple actor loss": simple_actor_loss,
+                "Losses/entropy loss": entropy_loss,
+            },
+        )
+
     return (actor_state, critic_state), losses
 
 
@@ -299,6 +313,7 @@ def _update_epoch_pre_partial(
     critic_network: Network,
     num_steps: int,
     num_envs: int,
+    log: bool,
 ) -> tuple[
     tuple[
         TrainState, TrainState, Transition, jax.Array, jax.Array, random.PRNGKeyArray
@@ -322,6 +337,7 @@ def _update_epoch_pre_partial(
         ent_coef (float): _description_
         clip_coef (float): _description_
         critic_network (Network): _description_
+        log (bool): Wether or not to log the losses in wandb
 
     Returns:
         tuple[ tuple[ TrainState, TrainState, Transition, jax.Array, jax.Array,/
@@ -356,6 +372,7 @@ def _update_epoch_pre_partial(
         ent_coef=ent_coef,
         clip_coef=clip_coef,
         critic_network=critic_network,
+        log=log,
     )
     (actor_state, critic_state), losses = jax.lax.scan(
         _update_minibatch, train_state, minibatches
@@ -477,10 +494,9 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         critic_network=critic_network,
         num_steps=num_steps,
         num_envs=num_envs,
+        log=log,
     )
-    update_state, _ = jax.lax.scan(
-        _update_epoch, update_state, None, update_epochs
-    )  # loss info
+    update_state, _ = jax.lax.scan(_update_epoch, update_state, None, update_epochs)  #
     actor_state = update_state[0]
     critic_state = update_state[1]
     traj_batch = update_state[2]
@@ -709,7 +725,8 @@ class PPO:
             run_name=f"{seed=}",
             config=self.config.model_dump(mode="json"),
         )
-        init_logging(logging_config)
+        if self.config.log:
+            init_logging(logging_config)
 
         train_jit = make_train(
             total_timesteps=total_timesteps,
@@ -731,7 +748,8 @@ class PPO:
         self._actor_state, self._critic_state, _, _, _ = runner_state
         if test:
             self.test(self.config.num_episode_test, seed=seed)
-        finish_logging()
+        if self.config.log:
+            finish_logging()
 
     def predict_probs(self, obs: jax.Array) -> jax.Array:
         """Predict the policy's probabilities of taking actions in obs"""
@@ -776,7 +794,8 @@ class PPO:
             step += 1
             done = done | jnp.int8(new_done)
             rewards = rewards + (reward * (1 - done))
-        wandb_test_log(rewards)
+        if self.config.log:
+            wandb_test_log(rewards)
 
 
 if __name__ == "__main__":
