@@ -10,14 +10,22 @@ from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams, EnvState
 from jax import random
 
+from jaxppo.config import PPOConfig
 from jaxppo.networks import (
     Network,
     get_adam_tx,
     init_actor_and_critic_state,
     init_networks,
 )
+from jaxppo.networks import predict_probs as network_predict_probs
 from jaxppo.utils import annealed_linear_schedule, get_parameterized_schedule
-from jaxppo.wandb_logging import LoggingConfig, finish_logging, init_logging, wandb_log
+from jaxppo.wandb_logging import (
+    LoggingConfig,
+    finish_logging,
+    init_logging,
+    wandb_log,
+    wandb_test_log,
+)
 from jaxppo.wrappers import FlattenObservationWrapper, LogWrapper
 
 
@@ -496,7 +504,7 @@ def make_train(  # pylint: disable=W0102, R0913
     gae_lambda: float = 0.95,
     clip_coef: float = 0.2,
     ent_coef: float = 0.01,
-    log=False,
+    log: bool = False,
 ) -> Callable[
     ..., tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray]
 ]:
@@ -524,6 +532,7 @@ def make_train(  # pylint: disable=W0102, R0913
         clip_coef (float, optional): PPO's clipping coefficient. Defaults to 0.2.
         ent_coef (float, optional): The entropy coefficient in the actor loss.\
               Defaults to 0.01.
+        log (bool, optional): Wether or not to log training using wandb.
 
     Returns:
         Callable[ ..., tuple[TrainState, TrainState, EnvState, jax.Array,\
@@ -583,7 +592,13 @@ def make_train(  # pylint: disable=W0102, R0913
         # TRAIN LOOP
 
         _, _rng = jax.random.split(key)
-        runner_state = (actor_state, critic_state, env_state, obsv, _rng)
+        runner_state = (
+            actor_state,
+            critic_state,
+            env_state,
+            obsv,
+            _rng,
+        )
         _update_step = partial(
             _update_step_pre_partial,
             actor_network=actor_network,
@@ -605,39 +620,204 @@ def make_train(  # pylint: disable=W0102, R0913
             log=log,
         )
         runner_state, _ = jax.lax.scan(_update_step, runner_state, None, num_updates)
+
         return runner_state
 
     return train
 
 
+class PPO:
+    """PPO Agent that allows simple training and testing"""
+
+    def __init__(  # pylint: disable=W0102, R0913
+        self,
+        total_timesteps: int,
+        num_steps: int,
+        num_envs: int,
+        env_id: str,
+        learning_rate: float,
+        num_minibatches: int = 4,
+        update_epochs: int = 4,
+        actor_architecture=["64", "tanh", "64", "tanh"],
+        critic_architecture=["64", "relu", "relu", "tanh"],
+        gamma: float = 0.99,
+        gae_lambda: float = 0.95,
+        clip_coef: float = 0.2,
+        ent_coef: float = 0.01,
+        log=False,
+    ) -> None:
+        """
+        PPO Agent that allows simple training and testing
+
+        Args:
+        total_timesteps (int): Total number of timesteps (distributed across all envs)\
+              to train for.
+        num_steps (int): Number of steps to run per environment before updating.
+        num_envs (int): Number of environments to run in parrallel.
+        env_id (str): The gym-id of the environment to use.
+        learning_rate (float): The learning rate for the optimizer of networks.
+        num_minibatches (int, optional): The number of minibatches (number of shuffled\
+              minibatch in an epoch). Defaults to 4.
+        update_epochs (int, optional): The number of epochs to run on the same\
+              collected data. Defaults to 4.
+        actor_architecture (list, optional): The description of the architecture of the\
+              actor network. Defaults to ["64", "tanh", "64", "tanh"].
+        critic_architecture (list, optional): The description of the architecture of\
+              the critic network. Defaults to ["64", "relu", "relu", "tanh"].
+        gamma (float, optional): The discount factor. Defaults to 0.99.
+        gae_lambda (float, optional): The gae advantage computation lambda parameter.\
+             Defaults to 0.95.
+        clip_coef (float, optional): PPO's clipping coefficient. Defaults to 0.2.
+        ent_coef (float, optional): The entropy coefficient in the actor loss.\
+              Defaults to 0.01.
+        log (bool, optional): Wether or not to log training using wandb.
+        """
+        self.config = PPOConfig(
+            total_timesteps=total_timesteps,
+            num_steps=num_steps,
+            num_envs=num_envs,
+            env_id=env_id,
+            learning_rate=learning_rate,
+            num_minibatches=num_minibatches,
+            update_epochs=update_epochs,
+            actor_architecture=actor_architecture,
+            critic_architecture=critic_architecture,
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+            clip_coef=clip_coef,
+            ent_coef=ent_coef,
+            log=log,
+        )
+
+        self._actor_state = None
+        self._critic_state = None
+        self.actor_network = None
+        self.critic_network = None
+
+    def train(self, seed: int, test: bool = False):
+        """
+        Trains the agent using the agent's config, will also evaluate at the end if test is set to true
+
+        Args:
+            seed (int): The seed for the agent's rng
+            test (bool, optional): Wether or not to evaluate the agent over test\
+                  episodes at the end. Defaults to False.
+        """
+        key = random.PRNGKey(seed)
+        logging_config = LoggingConfig(
+            project_name="test pure jax ppo",
+            run_name=f"{seed=}",
+            config=self.config.model_dump(mode="json"),
+        )
+        init_logging(logging_config)
+
+        train_jit = make_train(
+            total_timesteps=total_timesteps,
+            num_steps=self.config.num_steps,
+            num_envs=self.config.num_envs,
+            env_id=self.config.env_id,
+            learning_rate=self.config.learning_rate,
+            num_minibatches=self.config.num_minibatches,
+            update_epochs=self.config.update_epochs,
+            actor_architecture=self.config.actor_architecture,
+            critic_architecture=self.config.critic_architecture,
+            gamma=self.config.gamma,
+            gae_lambda=self.config.gae_lambda,
+            clip_coef=clip_coef,
+            ent_coef=self.config.ent_coef,
+            log=self.config.log,
+        )
+        runner_state = train_jit(key)
+        self._actor_state, self._critic_state, _, _, _ = runner_state
+        if test:
+            self.test(self.config.num_episode_test, seed=seed)
+        finish_logging()
+
+    def predict_probs(self, obs: jax.Array) -> jax.Array:
+        """Predict the policy's probabilities of taking actions in obs"""
+        if self._actor_state is None:
+            raise ValueError(
+                "Attempted to predict probs without an actor state/training the agent"
+                " first"
+            )
+
+        return network_predict_probs(self._actor_state, self._actor_state.params, obs)
+
+    def get_action(self, obs: jax.Array, key: random.PRNGKeyArray) -> jax.Array:
+        """Returns a numpy action compliant with gym using the current \
+            state of the agent"""
+        pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+        return pi.sample(seed=key)
+
+    def test(self, n_episodes: int, seed: int):
+        """Evaluate the agent over n_episodes (using seed for rng) and log the episodic\
+              returns"""
+        key = random.PRNGKey(seed)
+        (
+            key,
+            action_key,
+        ) = random.split(key, num=2)
+        env, env_params = gymnax.make(self.config.env_id)
+
+        vmap_reset = jax.vmap(env.reset, in_axes=(0, None))
+        vmap_step = jax.vmap(env.step, in_axes=(0, 0, 0, None))
+        vmap_keys = jax.random.split(key, n_episodes)
+
+        obs, state = vmap_reset(vmap_keys, env_params)
+        done = jnp.zeros(n_episodes, dtype=jnp.int8)
+        rewards = jnp.zeros(n_episodes)
+        step = 0
+        while not done.all():
+            action_key, rng = jax.random.split(action_key)
+            actions = self.get_action(obs, rng)
+            obs, state, reward, new_done, _ = vmap_step(
+                vmap_keys, state, actions, env_params
+            )
+            step += 1
+            done = done | jnp.int8(new_done)
+            rewards = rewards + (reward * (1 - done))
+        wandb_test_log(rewards)
+
+
 if __name__ == "__main__":
-    seed = 42
-    key = random.PRNGKey(seed)
-    logging_config = LoggingConfig(
-        project_name="test pure jax ppo",
-        run_name=f"{seed=}",
-        config={"test": "test"},
-    )
-    init_logging(logging_config)
+    # seed = 42
+    # key = random.PRNGKey(seed)
+    # logging_config = LoggingConfig(
+    #     project_name="test pure jax ppo",
+    #     run_name=f"{seed=}",
+    #     config={"test": "test"},
+    # )
+    # init_logging(logging_config)
     num_envs = 8
-    total_timesteps = int(4e6)
+    total_timesteps = int(1e6)
     num_steps = 128
     learning_rate = 2.5e-4
     clip_coef = 0.2
     entropy_coef = 0.01
     env_id = "CartPole-v1"
 
-    train_jit = jax.jit(
-        make_train(
-            total_timesteps=total_timesteps,
-            num_steps=num_steps,
-            num_envs=num_envs,
-            env_id=env_id,
-            learning_rate=learning_rate,
-            actor_architecture=["64", "tanh", "64", "tanh"],
-            critic_architecture=["64", "tanh", "64", "tanh"],
-            log=True,
-        )
+    # train_jit = jax.jit(
+    #     make_train(
+    # total_timesteps=total_timesteps,
+    # num_steps=num_steps,
+    # num_envs=num_envs,
+    # env_id=env_id,
+    # learning_rate=learning_rate,
+    # actor_architecture=["64", "tanh", "64", "tanh"],
+    # critic_architecture=["64", "tanh", "64", "tanh"],
+    # log=True,
+    #     )
+    # )
+    # out = train_jit(key)
+    # finish_logging()
+    agent = PPO(
+        total_timesteps=total_timesteps,
+        num_steps=num_steps,
+        num_envs=num_envs,
+        env_id=env_id,
+        learning_rate=learning_rate,
+        actor_architecture=["64", "tanh", "64", "tanh"],
+        critic_architecture=["64", "tanh", "64", "tanh"],
+        log=True,
     )
-    out = train_jit(key)
-    finish_logging()
+    agent.train(seed=42, test=True)
