@@ -52,6 +52,9 @@ profile = "black"
 max-line-length = 88
 
 
+[tool.mypy]
+disable_error_code = "attr-defined"
+
 [tool.tox]
 legacy_tox_ini = """
 
