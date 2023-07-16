@@ -296,6 +296,7 @@ def _update_minbatch_pre_partial(
                 "Losses/entropy loss": entropy_loss,
             },
         )
+        print("logging")
 
     return (actor_state, critic_state), losses
 
@@ -720,16 +721,17 @@ class PPO:
                   episodes at the end. Defaults to False.
         """
         key = random.PRNGKey(seed)
-        logging_config = LoggingConfig(
-            project_name="test pure jax ppo",
-            run_name=f"{seed=}",
-            config=self.config.model_dump(mode="json"),
-        )
+
         if self.config.log:
+            logging_config = LoggingConfig(
+                project_name="test pure jax ppo",
+                run_name=f"{seed=}",
+                config=self.config.model_dump(mode="json"),
+            )
             init_logging(logging_config)
 
         train_jit = make_train(
-            total_timesteps=total_timesteps,
+            total_timesteps=self.config.total_timesteps,
             num_steps=self.config.num_steps,
             num_envs=self.config.num_envs,
             env_id=self.config.env_id,
@@ -740,7 +742,7 @@ class PPO:
             critic_architecture=self.config.critic_architecture,
             gamma=self.config.gamma,
             gae_lambda=self.config.gae_lambda,
-            clip_coef=clip_coef,
+            clip_coef=self.config.clip_coef,
             ent_coef=self.config.ent_coef,
             log=self.config.log,
         )
@@ -758,12 +760,16 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-
         return network_predict_probs(self._actor_state, self._actor_state.params, obs)
 
     def get_action(self, obs: jax.Array, key: random.PRNGKeyArray) -> jax.Array:
         """Returns a numpy action compliant with gym using the current \
             state of the agent"""
+        if self._actor_state is None:
+            raise ValueError(
+                "Attempted to predict probs without an actor state/training the agent"
+                " first"
+            )
         pi = self._actor_state.apply_fn(self._actor_state.params, obs)
         return pi.sample(seed=key)
 
@@ -815,20 +821,6 @@ if __name__ == "__main__":
     entropy_coef = 0.01
     env_id = "CartPole-v1"
 
-    # train_jit = jax.jit(
-    #     make_train(
-    # total_timesteps=total_timesteps,
-    # num_steps=num_steps,
-    # num_envs=num_envs,
-    # env_id=env_id,
-    # learning_rate=learning_rate,
-    # actor_architecture=["64", "tanh", "64", "tanh"],
-    # critic_architecture=["64", "tanh", "64", "tanh"],
-    # log=True,
-    #     )
-    # )
-    # out = train_jit(key)
-    # finish_logging()
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,
