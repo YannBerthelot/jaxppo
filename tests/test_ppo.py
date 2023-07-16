@@ -1,7 +1,7 @@
 """Test ppo"""
 import pytest
-
 import wandb
+
 from jaxppo.ppo_pure_rl import PPO
 
 wandb.init(mode="disabled")

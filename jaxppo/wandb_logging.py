@@ -3,7 +3,6 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-
 import wandb
 
 

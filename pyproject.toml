@@ -47,6 +47,7 @@ verbose = true
 
 [tool.isort]
 profile = "black"
+src_paths = ["isort", "tests", "jaxppo"]
 
 [tool.flake8]
 max-line-length = 88
