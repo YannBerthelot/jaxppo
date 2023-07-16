@@ -1,4 +1,6 @@
 # pylint: disable = missing-function-docstring, missing-module-docstring
+import logging
+import os
 from typing import List, TypeAlias, Union
 
 import flax.linen as nn
@@ -7,7 +9,6 @@ import jax
 import jax.numpy as jnp
 import jaxlib
 import pytest
-from flax.core import freeze, unfreeze
 from jax import random
 
 from jaxppo.networks import (
@@ -81,7 +82,6 @@ def test_actor_init(setup_simple_actor):
 
 def test_critic_init(setup_simple_critic):
     """Check that the network architectures matches the requested architecture"""
-
     critic = setup_simple_critic
     expected_critic = nn.Sequential(
         [

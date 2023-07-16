@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
 
     steps:
       - name: Checkout sources
@@ -43,13 +43,10 @@ jobs:
       - name: Install project
         run: poetry install --no-interaction --all-extras
       - name: Run tox
-        env:
-          WANDB_MODE: offline
-          WANDB_API: ${{ secrets.WANDB_API_KEY }}
         run: |
-          poetry run wandb login "$WANDB_API"
-          source .venv/bin/activate
-          tox  
+          pip install wandb
+          wandb login ${{ secrets.WANDB_API_KEY }}
+          poetry run tox  
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
