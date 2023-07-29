@@ -1,6 +1,6 @@
 """Pure-jax implementation of PPO"""
 from functools import partial
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, Optional
 
 import gymnax
 import jax
@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams, EnvState
+from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
 from jaxppo.config import PPOConfig
@@ -522,6 +523,7 @@ def make_train(  # pylint: disable=W0102, R0913
     clip_coef: float = 0.2,
     ent_coef: float = 0.01,
     log: bool = False,
+    env_params: Optional[EnvParams] = None,
 ) -> Callable[
     ..., tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray]
 ]:
@@ -555,10 +557,23 @@ def make_train(  # pylint: disable=W0102, R0913
         Callable[ ..., tuple[TrainState, TrainState, EnvState, jax.Array,\
               random.PRNGKeyArray] ]: The train function to be called to actually train.
     """
+
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
     batch_size = num_envs * num_steps
-    env, env_params = gymnax.make(env_id)
+    if isinstance(env_id, str):
+        env, env_params = gymnax.make(env_id)
+
+    elif isinstance(env_id, Environment) or issubclass(env_id.__class__, GymnaxWrapper):
+        if env_params is None:
+            raise ValueError(
+                "env_params should be provided if using a predefined env and not env_id"
+            )
+        env = env_id
+    else:
+        raise ValueError(
+            f"Environment is not a gymnax env or wrapped gymnax env : {env_id}"
+        )
     env = FlattenObservationWrapper(env)
     env = LogWrapper(env)
 
@@ -662,6 +677,7 @@ class PPO:
         clip_coef: float = 0.2,
         ent_coef: float = 0.01,
         log=False,
+        env_params: Optional[EnvParams] = None,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -689,6 +705,7 @@ class PPO:
               Defaults to 0.01.
         log (bool, optional): Wether or not to log training using wandb.
         """
+
         self.config = PPOConfig(
             total_timesteps=total_timesteps,
             num_steps=num_steps,
@@ -704,6 +721,7 @@ class PPO:
             clip_coef=clip_coef,
             ent_coef=ent_coef,
             log=log,
+            env_params=env_params,
         )
 
         self._actor_state = None
@@ -745,6 +763,7 @@ class PPO:
             clip_coef=self.config.clip_coef,
             ent_coef=self.config.ent_coef,
             log=self.config.log,
+            env_params=self.config.env_params,
         )
         runner_state = train_jit(key)
         self._actor_state, self._critic_state, _, _, _ = runner_state
@@ -805,14 +824,6 @@ class PPO:
 
 
 if __name__ == "__main__":
-    # seed = 42
-    # key = random.PRNGKey(seed)
-    # logging_config = LoggingConfig(
-    #     project_name="test pure jax ppo",
-    #     run_name=f"{seed=}",
-    #     config={"test": "test"},
-    # )
-    # init_logging(logging_config)
     num_envs = 8
     total_timesteps = int(1e6)
     num_steps = 128
