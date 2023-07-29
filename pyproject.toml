@@ -18,6 +18,8 @@ chex = "0.1.81"
 gymnax = "^0.0.6"
 appdirs = "1.4.3"
 wandb = "^0.15.5"
+distrax = "^0.1.4"
+pydantic = "^2.0.2"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -45,10 +47,14 @@ verbose = true
 
 [tool.isort]
 profile = "black"
+src_paths = ["isort", "tests", "jaxppo"]
 
 [tool.flake8]
 max-line-length = 88
 
+
+[tool.mypy]
+disable_error_code = "attr-defined"
 
 [tool.tox]
 legacy_tox_ini = """
@@ -89,7 +95,7 @@ deps =
     pytest
 commands =
     poetry install
-    poetry run coverage run --source=jaxppo --branch -m pytest {toxinidir}
+    poetry run coverage run  --source=jaxppo --branch -m pytest {toxinidir}
     poetry run coverage report -m --fail-under 80
     poetry run coverage xml -o {toxinidir}/coverage.xml
 

@@ -1,6 +1,8 @@
 """Helpers for weights&biases logging"""
 from dataclasses import dataclass
 
+import jax
+import jax.numpy as jnp
 import wandb
 
 
@@ -24,10 +26,27 @@ def init_logging(logging_config: LoggingConfig):
     )
 
 
+def wandb_log(info):
+    """Extract meaningful values from the info buffer and log them into wandb"""
+    return_values = info["returned_episode_returns"][info["returned_episode"]]
+    timestep = jnp.max(info["timestep"]) * 8
+    wandb.log(
+        {"Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep}
+    )
+
+
 def log_variables(variables_to_log: dict, commit: bool = False):
     """Log variables (in form of a dict of names and values) into wandb.
     Commit to finish a step."""
     wandb.log(variables_to_log, commit=commit)
+
+
+def wandb_test_log(rewards: jax.Array):
+    """Log the test results into wandb"""
+    hist = wandb.Histogram(rewards.tolist())
+    wandb.log({"Test/Episodic reward": hist})
+    # log_variables({"Test/Episodic reward": hist})
+    wandb.run.summary["mean_test_reward"] = jnp.mean(rewards)
 
 
 def finish_logging():
