@@ -50,8 +50,9 @@ class PPOConfig(BaseModel):
     def check_env_params(cls, value, values):
         """Check that the env params are of the proper type"""
         if value is None:
-            if not isinstance(values["env_id"], str):
-                raise ValueError("Missing EnvParams for pre-defined env")
+            if "env_id" in values:
+                if not isinstance(values["env_id"], str):
+                    raise ValueError("Missing EnvParams for pre-defined env")
             return value
         if "EnvParams" not in str(value.__class__):
             raise ValueError(
