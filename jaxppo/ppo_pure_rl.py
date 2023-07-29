@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams, EnvState
-from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
 from jaxppo.config import PPOConfig
@@ -563,17 +562,6 @@ def make_train(  # pylint: disable=W0102, R0913
     batch_size = num_envs * num_steps
     if isinstance(env_id, str):
         env, env_params = gymnax.make(env_id)
-
-    elif isinstance(env_id, Environment) or issubclass(env_id.__class__, GymnaxWrapper):
-        if env_params is None:
-            raise ValueError(
-                "env_params should be provided if using a predefined env and not env_id"
-            )
-        env = env_id
-    else:
-        raise ValueError(
-            f"Environment is not a gymnax env or wrapped gymnax env : {env_id}"
-        )
     env = FlattenObservationWrapper(env)
     env = LogWrapper(env)
 
