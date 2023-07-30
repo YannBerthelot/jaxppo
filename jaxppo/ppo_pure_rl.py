@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams, EnvState
+from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
 from jaxppo.config import PPOConfig
@@ -511,7 +512,7 @@ def make_train(  # pylint: disable=W0102, R0913
     total_timesteps: int,
     num_steps: int,
     num_envs: int,
-    env_id: str,
+    env_id: str | Environment | GymnaxWrapper,
     learning_rate: float,
     num_minibatches: int = 4,
     update_epochs: int = 4,
@@ -534,7 +535,8 @@ def make_train(  # pylint: disable=W0102, R0913
               to train for.
         num_steps (int): Number of steps to run per environment before updating.
         num_envs (int): Number of environments to run in parrallel.
-        env_id (str): The gym-id of the environment to use.
+        env_id (str | Environment | GymnaxWrapper): The gym-id of the environment to\
+              use or a pre-defined wrapped or unwrapped gymnax env .
         learning_rate (float): The learning rate for the optimizer of networks.
         num_minibatches (int, optional): The number of minibatches (number of shuffled\
               minibatch in an epoch). Defaults to 4.
@@ -561,9 +563,8 @@ def make_train(  # pylint: disable=W0102, R0913
     minibatch_size = num_envs * num_steps // num_minibatches
     batch_size = num_envs * num_steps
     if isinstance(env_id, str):
-        env, env_params = gymnax.make(env_id)
-    env = FlattenObservationWrapper(env)
-    env = LogWrapper(env)
+        env_id, env_params = gymnax.make(env_id)
+    env = LogWrapper(FlattenObservationWrapper(env_id))
 
     def train(
         key: random.PRNGKeyArray,
@@ -654,7 +655,7 @@ class PPO:
         total_timesteps: int,
         num_steps: int,
         num_envs: int,
-        env_id: str,
+        env_id: str | Environment | GymnaxWrapper,
         learning_rate: float,
         num_minibatches: int = 4,
         update_epochs: int = 4,
@@ -675,7 +676,8 @@ class PPO:
               to train for.
         num_steps (int): Number of steps to run per environment before updating.
         num_envs (int): Number of environments to run in parrallel.
-        env_id (str): The gym-id of the environment to use.
+        env_id (str | Environment | GymnaxWrapper): The gym-id of the environment to\
+              use or a pre-defined wrapped or unwrapped gymnax env .
         learning_rate (float): The learning rate for the optimizer of networks.
         num_minibatches (int, optional): The number of minibatches (number of shuffled\
               minibatch in an epoch). Defaults to 4.

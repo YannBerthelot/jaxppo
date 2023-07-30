@@ -5,7 +5,7 @@ import pytest
 import wandb
 from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
 
-from jaxppo.ppo_pure_rl import PPO
+from jaxppo.ppo_pure_rl import PPO, make_train
 
 wandb.init(mode="disabled")
 
@@ -29,6 +29,14 @@ def test_trained_ppo_pre_defined_env():
         log=False,
         env_params=env_params,
     )
+    make_train(
+        total_timesteps,
+        num_steps,
+        num_envs,
+        env_id,
+        learning_rate,
+        env_params=env_params,
+    )
 
 
 def test_trained_ppo_pre_defined_wrapped_env():
@@ -49,6 +57,14 @@ def test_trained_ppo_pre_defined_wrapped_env():
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
         log=False,
+        env_params=env_params,
+    )
+    make_train(
+        total_timesteps,
+        num_steps,
+        num_envs,
+        env_id,
+        learning_rate,
         env_params=env_params,
     )
 
