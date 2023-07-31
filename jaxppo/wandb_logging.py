@@ -1,9 +1,13 @@
 """Helpers for weights&biases logging"""
+import os
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import wandb
+
+os.environ["WANDB_SILENT"] = "false"
+os.environ["WANDB_START_METHOD"] = "thread"
 
 
 @dataclass
