@@ -22,7 +22,6 @@ from jaxppo.networks import predict_probs as network_predict_probs
 from jaxppo.utils import annealed_linear_schedule, get_parameterized_schedule
 from jaxppo.wandb_logging import (
     LoggingConfig,
-    finish_logging,
     init_logging,
     log_variables,
     wandb_log,
@@ -665,7 +664,7 @@ class PPO:
         gae_lambda: float = 0.95,
         clip_coef: float = 0.2,
         ent_coef: float = 0.01,
-        log=False,
+        logging_config: Optional[LoggingConfig] = None,
         env_params: Optional[EnvParams] = None,
     ) -> None:
         """
@@ -710,7 +709,7 @@ class PPO:
             gae_lambda=gae_lambda,
             clip_coef=clip_coef,
             ent_coef=ent_coef,
-            log=log,
+            logging_config=logging_config,
             env_params=env_params,
         )
 
@@ -730,13 +729,15 @@ class PPO:
         """
         key = random.PRNGKey(seed)
 
-        if self.config.log:
-            logging_config = LoggingConfig(
-                project_name="test pure jax ppo",
-                run_name=f"{seed=}",
-                config=self.config.model_dump(mode="json"),
+        if self.config.logging_config is not None:
+            config = {  # Remove logging config from config
+                k: self.config[k]
+                for k in set(list(self.config.keys())) - set(["logging_config"])
+            }
+            self.config.logging_config.config = dict(
+                config, **self.config.logging_config.config
             )
-            init_logging(logging_config)
+            init_logging(self.config.logging_config)
 
         train_jit = make_train(
             total_timesteps=self.config.total_timesteps,
@@ -752,15 +753,13 @@ class PPO:
             gae_lambda=self.config.gae_lambda,
             clip_coef=self.config.clip_coef,
             ent_coef=self.config.ent_coef,
-            log=self.config.log,
+            log=self.config.logging_config is not None,
             env_params=self.config.env_params,
         )
         runner_state = train_jit(key)
         self._actor_state, self._critic_state, _, _, _ = runner_state
         if test:
             self.test(self.config.num_episode_test, seed=seed)
-        if self.config.log:
-            finish_logging()
 
     def predict_probs(self, obs: jax.Array) -> jax.Array:
         """Predict the policy's probabilities of taking actions in obs"""
@@ -809,7 +808,7 @@ class PPO:
             step += 1
             done = done | jnp.int8(new_done)
             rewards = rewards + (reward * (1 - done))
-        if self.config.log:
+        if self.config.logging_config is not None:
             wandb_test_log(rewards)
 
 
@@ -821,7 +820,7 @@ if __name__ == "__main__":
     clip_coef = 0.2
     entropy_coef = 0.01
     env_id = "CartPole-v1"
-
+    logging_config = LoggingConfig("Jax PPO", "test", config={})
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,
@@ -830,6 +829,6 @@ if __name__ == "__main__":
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=True,
+        logging_config=logging_config,
     )
     agent.train(seed=42, test=True)

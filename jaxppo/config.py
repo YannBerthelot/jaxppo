@@ -5,6 +5,8 @@ from gymnax.environments.environment import Environment
 from gymnax.wrappers.purerl import GymnaxWrapper
 from pydantic import BaseModel, ConfigDict, validator
 
+from jaxppo.wandb_logging import LoggingConfig
+
 
 class PPOConfig(BaseModel):
     """Config for PPO agent"""
@@ -24,7 +26,7 @@ class PPOConfig(BaseModel):
     gae_lambda: float = 0.95
     clip_coef: float = 0.2
     ent_coef: float = 0.01
-    log: bool = False
+    logging_config: Optional[LoggingConfig] = None
     num_episode_test: int = 20
     env_params: Optional[Any] = None
 

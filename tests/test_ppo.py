@@ -6,6 +6,7 @@ import wandb
 from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
 
 from jaxppo.ppo_pure_rl import PPO, make_train
+from jaxppo.wandb_logging import LoggingConfig
 
 wandb.init(mode="disabled")
 
@@ -26,7 +27,6 @@ def test_trained_ppo_pre_defined_env():
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=False,
         env_params=env_params,
     )
     make_train(
@@ -56,7 +56,6 @@ def test_trained_ppo_pre_defined_wrapped_env():
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=False,
         env_params=env_params,
     )
     make_train(
@@ -84,7 +83,6 @@ def test_ppo_train():
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=False,
     )
     agent.train(seed=42, test=False)
 
@@ -104,7 +102,6 @@ def test_ppo_test_fails_without_agent_state():
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=False,
     )
     with pytest.raises(ValueError):
         agent.test(seed=42, n_episodes=10)
@@ -125,7 +122,6 @@ def test_ppo_train_and_test():
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=False,
     )
     agent.train(seed=42, test=True)
 
@@ -137,6 +133,7 @@ def test_ppo_train_and_log():
     num_steps = 8
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
+    logging_config = LoggingConfig("Test", "test", {"test": 1})
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,
@@ -145,7 +142,7 @@ def test_ppo_train_and_log():
         learning_rate=learning_rate,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        log=True,
+        logging_config=logging_config,
     )
     agent.train(seed=42, test=True)
 
@@ -167,7 +164,6 @@ def test_ppo_fails_init_with_incorrect_env():
             learning_rate=learning_rate,
             actor_architecture=["64", "tanh", "64", "tanh"],
             critic_architecture=["64", "tanh", "64", "tanh"],
-            log=True,
         )
 
 
@@ -187,7 +183,6 @@ def test_ppo_fails_init_with_no_env_params_in_pre_defined_env():
             learning_rate=learning_rate,
             actor_architecture=["64", "tanh", "64", "tanh"],
             critic_architecture=["64", "tanh", "64", "tanh"],
-            log=True,
         )
 
 
@@ -207,6 +202,5 @@ def test_ppo_fails_init_with_wrong_env_params():
             learning_rate=learning_rate,
             actor_architecture=["64", "tanh", "64", "tanh"],
             critic_architecture=["64", "tanh", "64", "tanh"],
-            log=True,
             env_params=False,
         )
