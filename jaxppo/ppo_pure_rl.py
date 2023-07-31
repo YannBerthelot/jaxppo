@@ -205,7 +205,7 @@ def _critic_loss_fn_pre_partial(
     traj_batch: Transition,
     targets: jax.Array,
     critic_network: Network,
-    clip_coef: float,
+    clip_coef: Optional[float],
 ) -> jax.Array:
     """
      Compute the PPO critic loss with the current critic network , its parameters, \
@@ -224,14 +224,14 @@ def _critic_loss_fn_pre_partial(
     value = critic_network.apply(critic_params, traj_batch.obs)
 
     # CALCULATE VALUE LOSS
-    value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(
-        -clip_coef, clip_coef
-    )
     value_losses = jnp.square(value - targets)
-    value_losses_clipped = jnp.square(value_pred_clipped - targets)
-    value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-
-    return value_loss
+    if clip_coef is not None:
+        value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(
+            -clip_coef, clip_coef
+        )
+        value_losses_clipped = jnp.square(value_pred_clipped - targets)
+        return 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    return 0.5 * value_losses.mean()
 
 
 def _update_minbatch_pre_partial(
@@ -240,6 +240,7 @@ def _update_minbatch_pre_partial(
     actor_network: Network,
     ent_coef: float,
     clip_coef: float,
+    clip_coef_vf: Optional[float],
     critic_network: Network,
     log: bool,
 ) -> tuple[
@@ -274,7 +275,9 @@ def _update_minbatch_pre_partial(
     )
     ppo_actor_loss_grad_function = jax.value_and_grad(_actor_loss_fn, has_aux=True)
     _critic_loss_fn = partial(
-        _critic_loss_fn_pre_partial, critic_network=critic_network, clip_coef=clip_coef
+        _critic_loss_fn_pre_partial,
+        critic_network=critic_network,
+        clip_coef=clip_coef_vf,
     )
     ppo_critic_loss_grad_function = jax.value_and_grad(_critic_loss_fn)
     (actor_loss, (simple_actor_loss, entropy_loss)), actor_grads = (
@@ -296,12 +299,11 @@ def _update_minbatch_pre_partial(
                 "Losses/entropy loss": entropy_loss,
             },
         )
-        print("logging")
 
     return (actor_state, critic_state), losses
 
 
-def _update_epoch_pre_partial(
+def _update_epoch_pre_partial(  # pylint: disable=R0913
     update_state: tuple[
         TrainState, TrainState, Transition, jax.Array, jax.Array, random.PRNGKeyArray
     ],
@@ -311,6 +313,7 @@ def _update_epoch_pre_partial(
     actor_network: Network,
     ent_coef: float,
     clip_coef: float,
+    clip_coef_vf: Optional[float],
     critic_network: Network,
     num_steps: int,
     num_envs: int,
@@ -372,6 +375,7 @@ def _update_epoch_pre_partial(
         actor_network=actor_network,
         ent_coef=ent_coef,
         clip_coef=clip_coef,
+        clip_coef_vf=clip_coef_vf,
         critic_network=critic_network,
         log=log,
     )
@@ -408,6 +412,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     num_minibatches: int,
     ent_coef: float,
     clip_coef: float,
+    clip_coef_vf: Optional[float],
     update_epochs: int,
     num_envs: int,
     num_steps: int,
@@ -492,6 +497,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         actor_network=actor_network,
         ent_coef=ent_coef,
         clip_coef=clip_coef,
+        clip_coef_vf=clip_coef_vf,
         critic_network=critic_network,
         num_steps=num_steps,
         num_envs=num_envs,
@@ -520,9 +526,12 @@ def make_train(  # pylint: disable=W0102, R0913
     gamma: float = 0.99,
     gae_lambda: float = 0.95,
     clip_coef: float = 0.2,
+    clip_coef_vf: Optional[float] = None,
     ent_coef: float = 0.01,
     log: bool = False,
     env_params: Optional[EnvParams] = None,
+    anneal_lr: bool = True,
+    max_grad_norm: Optional[float] = 0.5,
 ) -> Callable[
     ..., tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray]
 ]:
@@ -587,14 +596,18 @@ def make_train(  # pylint: disable=W0102, R0913
             squeeze_value=True,
             categorical_output=True,
         )
-        scheduler = get_parameterized_schedule(
-            linear_scheduler=annealed_linear_schedule,
-            initial_learning_rate=learning_rate,
-            num_minibatches=num_minibatches,
-            update_epochs=update_epochs,
-            num_updates=total_timesteps // batch_size,
-        )
-        tx = get_adam_tx(learning_rate=scheduler)
+        if anneal_lr:
+            scheduler = get_parameterized_schedule(
+                linear_scheduler=annealed_linear_schedule,
+                initial_learning_rate=learning_rate,
+                num_minibatches=num_minibatches,
+                update_epochs=update_epochs,
+                num_updates=total_timesteps // batch_size,
+            )
+            tx = get_adam_tx(learning_rate=scheduler, max_grad_norm=max_grad_norm)
+        else:
+            tx = get_adam_tx(learning_rate=learning_rate, max_grad_norm=max_grad_norm)
+
         actor_state, critic_state = init_actor_and_critic_state(
             actor_network=actor_network,
             critic_network=critic_network,
@@ -634,6 +647,7 @@ def make_train(  # pylint: disable=W0102, R0913
             num_minibatches=num_minibatches,
             ent_coef=ent_coef,
             clip_coef=clip_coef,
+            clip_coef_vf=clip_coef_vf,
             update_epochs=update_epochs,
             num_envs=num_envs,
             num_steps=num_steps,
@@ -666,6 +680,7 @@ class PPO:
         ent_coef: float = 0.01,
         logging_config: Optional[LoggingConfig] = None,
         env_params: Optional[EnvParams] = None,
+        anneal_lr: bool = True,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -711,6 +726,7 @@ class PPO:
             ent_coef=ent_coef,
             logging_config=logging_config,
             env_params=env_params,
+            anneal_lr=anneal_lr,
         )
 
         self._actor_state = None
@@ -755,6 +771,8 @@ class PPO:
             ent_coef=self.config.ent_coef,
             log=self.config.logging_config is not None,
             env_params=self.config.env_params,
+            anneal_lr=self.config.anneal_lr,
+            max_grad_norm=self.config.max_grad_norm,
         )
         runner_state = train_jit(key)
         self._actor_state, self._critic_state, _, _, _ = runner_state
@@ -816,6 +834,8 @@ class PPO:
 
 
 if __name__ == "__main__":
+    import wandb
+
     num_envs = 8
     total_timesteps = int(1e6)
     num_steps = 128
@@ -824,6 +844,7 @@ if __name__ == "__main__":
     entropy_coef = 0.01
     env_id = "CartPole-v1"
     logging_config = LoggingConfig("Jax PPO", "test", config={})
+    init_logging(logging_config=logging_config)
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,
@@ -835,3 +856,4 @@ if __name__ == "__main__":
         logging_config=logging_config,
     )
     agent.train(seed=42, test=True)
+    wandb.finish()
