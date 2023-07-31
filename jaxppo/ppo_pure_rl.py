@@ -790,7 +790,7 @@ class PPO:
             action_key,
         ) = random.split(key, num=2)
         if isinstance(self.config.env_id, str):
-            env, env_params = gymnax.make(env_id)
+            env, env_params = gymnax.make(self.config.env_id)
         else:
             env, env_params = self.config.env_id, self.config.env_params
 
