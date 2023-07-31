@@ -730,9 +730,9 @@ class PPO:
         key = random.PRNGKey(seed)
 
         if self.config.logging_config is not None:
+            config = self.config.to_dict()
             config = {  # Remove logging config from config
-                k: self.config[k]
-                for k in set(list(self.config.keys())) - set(["logging_config"])
+                k: config[k] for k in set(list(config.keys())) - set(["logging_config"])
             }
             self.config.logging_config.config = dict(
                 config, **self.config.logging_config.config

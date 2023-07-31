@@ -8,8 +8,6 @@ from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=
 from jaxppo.ppo_pure_rl import PPO, make_train
 from jaxppo.wandb_logging import LoggingConfig
 
-wandb.init(mode="disabled")
-
 
 def test_trained_ppo_pre_defined_env():
     """Test that ppo init and train work on pre-defined gymnax env"""
@@ -133,18 +131,22 @@ def test_ppo_train_and_log():
     num_steps = 8
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
-    logging_config = LoggingConfig("Test", "test", {"test": 1})
-    agent = PPO(
-        total_timesteps=total_timesteps,
-        num_steps=num_steps,
-        num_envs=num_envs,
-        env_id=env_id,
-        learning_rate=learning_rate,
-        actor_architecture=["64", "tanh", "64", "tanh"],
-        critic_architecture=["64", "tanh", "64", "tanh"],
-        logging_config=logging_config,
-    )
-    agent.train(seed=42, test=True)
+    wandb.init(mode="disabled")
+    try:
+        logging_config = LoggingConfig("Test", "test", {"test": 1})
+        agent = PPO(
+            total_timesteps=total_timesteps,
+            num_steps=num_steps,
+            num_envs=num_envs,
+            env_id=env_id,
+            learning_rate=learning_rate,
+            actor_architecture=["64", "tanh", "64", "tanh"],
+            critic_architecture=["64", "tanh", "64", "tanh"],
+            logging_config=logging_config,
+        )
+        agent.train(seed=42, test=True)
+    finally:
+        wandb.finish()
 
 
 def test_ppo_fails_init_with_incorrect_env():
