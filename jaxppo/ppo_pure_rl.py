@@ -516,7 +516,7 @@ def make_train(  # pylint: disable=W0102, R0913
     num_minibatches: int = 4,
     update_epochs: int = 4,
     actor_architecture=["64", "tanh", "64", "tanh"],
-    critic_architecture=["64", "relu", "relu", "tanh"],
+    critic_architecture=["64", "relu", "64", "tanh"],
     gamma: float = 0.99,
     gae_lambda: float = 0.95,
     clip_coef: float = 0.2,
@@ -789,7 +789,10 @@ class PPO:
             key,
             action_key,
         ) = random.split(key, num=2)
-        env, env_params = gymnax.make(self.config.env_id)
+        if isinstance(self.config.env_id, str):
+            env, env_params = gymnax.make(env_id)
+        else:
+            env, env_params = self.config.env_id, self.config.env_params
 
         vmap_reset = jax.vmap(env.reset, in_axes=(0, None))
         vmap_step = jax.vmap(env.step, in_axes=(0, 0, 0, None))
