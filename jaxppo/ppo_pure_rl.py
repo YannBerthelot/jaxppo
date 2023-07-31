@@ -483,7 +483,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         permutation_key,
     )
     if log:
-        jax.debug.callback(wandb_log, traj_batch.info)
+        jax.debug.callback(wandb_log, traj_batch.info, num_envs)
 
     _update_epoch = partial(
         _update_epoch_pre_partial,
