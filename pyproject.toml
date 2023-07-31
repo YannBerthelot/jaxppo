@@ -79,7 +79,11 @@ commands = pre-commit run --all-files
 
 
 [testenv:coverage]
-commands = poetry run coverage run --branch -m pytest
+commands = 
+    poetry run coverage run --branch -m pytest {toxinidir}
+    poetry run coverage report -m --fail-under 80
+    poetry run coverage xml -o {toxinidir}/coverage.xml
+
 
 [gh-actions]
 python =
