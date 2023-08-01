@@ -9,7 +9,6 @@ import jax.numpy as jnp
 import jaxlib
 import numpy as np
 import optax
-from flax import struct
 from flax.core import FrozenDict
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
@@ -75,8 +74,7 @@ class Network(nn.Module):
     input_architecture: Sequence[Union[str, ActivationFunction]]
     actor: bool
     num_of_actions: Optional[int] = None
-    squeeze_value: bool = False
-    categorical_output: bool = False
+    shared_network: bool = False
 
     @property
     def architecture(self) -> nn.Sequential:
@@ -94,75 +92,89 @@ class Network(nn.Module):
         else:
             num_actions = 1
             kernel_init = 1
-        if self.actor:
+        if self.shared_network:
             return nn.Sequential(
+                [*parse_architecture(self.input_architecture)],
+            )
+        else:
+            if self.actor:
+                return nn.Sequential(
+                    [
+                        *parse_architecture(self.input_architecture),
+                        nn.Dense(
+                            num_actions,
+                            kernel_init=orthogonal(kernel_init),
+                            bias_init=constant(0.0),
+                        ),
+                        distrax.Categorical,
+                    ]
+                )
+            else:
+                return nn.Sequential(
+                    [
+                        *parse_architecture(self.input_architecture),
+                        nn.Dense(
+                            num_actions,
+                            kernel_init=orthogonal(kernel_init),
+                            bias_init=constant(0.0),
+                        ),
+                    ]
+                )
+
+    @nn.compact
+    def __call__(self, x: Array):
+        if self.shared_network:
+            feature_extractor = self.architecture(x)
+            pi = nn.Sequential(
                 [
-                    *parse_architecture(self.input_architecture),
                     nn.Dense(
-                        num_actions,
-                        kernel_init=orthogonal(kernel_init),
+                        self.num_of_actions,
+                        kernel_init=orthogonal(0.01),
                         bias_init=constant(0.0),
                     ),
                     distrax.Categorical,
                 ]
-            )
+            )(feature_extractor)
+            val = nn.Dense(
+                1,
+                kernel_init=orthogonal(1),
+                bias_init=constant(0.0),
+            )(feature_extractor)
+            return pi, jnp.squeeze(val, axis=-1)
         else:
-            return nn.Sequential(
-                [
-                    *parse_architecture(self.input_architecture),
-                    nn.Dense(
-                        num_actions,
-                        kernel_init=orthogonal(kernel_init),
-                        bias_init=constant(0.0),
-                    ),
-                ]
-            )
-
-    @nn.compact
-    def __call__(self, x: Array):
-        return (
-            self.architecture(x)
-            if not (self.squeeze_value)
-            else jnp.squeeze(self.architecture(x), axis=-1)
-        )
+            if self.actor:
+                return self.architecture(x)
+            return jnp.squeeze(self.architecture(x), axis=-1)
 
 
 def init_networks(
     env: gym.Env,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
-    critic_architecture: Sequence[Union[str, ActivationFunction]],
-    squeeze_value: bool = False,
-    categorical_output: bool = False,
-) -> Tuple[Network, Network]:
+    critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
+    shared_network: bool = False,
+) -> Tuple[Network, Optional[Network]]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
     num_actions = get_num_actions(env)
-    actor = Network(
-        input_architecture=actor_architecture,
-        actor=True,
-        num_of_actions=num_actions,
-        categorical_output=categorical_output,
-    )
-    critic = Network(
-        input_architecture=critic_architecture, actor=False, squeeze_value=squeeze_value
-    )
-    return actor, critic
-
-
-class AgentParams(struct.PyTreeNode):  # type : ignore
-    """Store the actor and critic network parameters"""
-
-    actor_params: FrozenDict
-    critic_params: FrozenDict
-
-
-class AgentState(TrainState):
-    """Store the agent training state/parameters"""
-
-    # Setting default values for agent functions to make
-    # TrainState work in jitted function
-    actor_fn: Callable = struct.field(pytree_node=False)
-    critic_fn: Callable = struct.field(pytree_node=False)
+    if shared_network:
+        network = Network(
+            input_architecture=actor_architecture,
+            actor=True,
+            num_of_actions=num_actions,
+            shared_network=True,
+        )
+        return network, None
+    else:
+        actor = Network(
+            input_architecture=actor_architecture,
+            actor=True,
+            num_of_actions=num_actions,
+        )
+        critic = Network(
+            input_architecture=critic_architecture,
+            actor=False,
+        )
+        return actor, critic
 
 
 def get_adam_tx(
@@ -183,16 +195,29 @@ def get_adam_tx(
 
 
 def init_actor_and_critic_state(
-    actor_network: Network,
-    critic_network: Network,
-    actor_key: random.PRNGKeyArray,
-    critic_key: random.PRNGKeyArray,
     env: gym.Env,
+    actor_network: Network,
+    actor_key: random.PRNGKeyArray,
     tx: Union[GradientTransformationExtraArgs, GradientTransformation],
+    critic_network: Optional[Network] = None,
+    critic_key: Optional[random.PRNGKeyArray] = None,
     env_params=None,
-) -> Tuple[TrainState, TrainState]:
+    shared_network: bool = False,
+) -> Tuple[TrainState, Optional[TrainState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     obs = sample_obs_space(env, env_params)
+    if shared_network:
+        actor_critic_params = actor_network.init(actor_key, obs)
+        actor_critic = TrainState.create(
+            params=actor_critic_params, tx=tx, apply_fn=actor_network.apply
+        )
+        return actor_critic, None
+
+    if critic_network is None or critic_key is None:
+        raise ValueError(
+            "Critic network and key should be defined if not using                 "
+            " shared network"
+        )
     actor_params = actor_network.init(actor_key, obs)
     critic_params = critic_network.init(critic_key, obs)
     actor = TrainState.create(params=actor_params, tx=tx, apply_fn=actor_network.apply)
@@ -202,38 +227,24 @@ def init_actor_and_critic_state(
     return actor, critic
 
 
-def init_agent_state(
-    actor: Network,
-    critic: Network,
-    actor_key: random.PRNGKeyArray,
-    critic_key: random.PRNGKeyArray,
-    env: gym.Env,
-    tx: Union[GradientTransformationExtraArgs, GradientTransformation],
-) -> AgentState:
-    """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
-    obs = env.reset()[0]
-    actor_params = actor.init(actor_key, obs)
-    critic_params = critic.init(critic_key, obs)
-    agent_params = AgentParams(actor_params=actor_params, critic_params=critic_params)
-    return AgentState.create(
-        params=agent_params,
-        tx=tx,
-        # As we have separated actor and critic we don't use apply_fn
-        apply_fn=None,
-        actor_fn=actor.apply,
-        critic_fn=critic.apply,
-    )
+def predict_probs_and_value(
+    actor_critic_state: TrainState, actor_critic_params: FrozenDict, obs: ndarray
+) -> Tuple[Array, Array]:
+    """Return the predicted probs and value of the given obs with the current \
+        actor critic state"""
+    pi, val = actor_critic_state.apply_fn(actor_critic_params, obs)
+    return pi.probs, val
 
 
 def predict_value(
-    critc_state: AgentState, critic_params: AgentParams, obs: ndarray
+    critic_state: TrainState, critic_params: FrozenDict, obs: ndarray
 ) -> Array:
     """Return the predicted value of the given obs with the current critic state"""
-    return critc_state.apply_fn(critic_params, obs)  # type: ignore[attr-defined]
+    return critic_state.apply_fn(critic_params, obs)  # type: ignore[attr-defined]
 
 
 def predict_probs(
-    actor_state: AgentState, actor_params: AgentParams, obs: ndarray
+    actor_state: TrainState, actor_params: FrozenDict, obs: ndarray
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
     return actor_state.apply_fn(actor_params, obs).probs  # type: ignore[attr-defined]
