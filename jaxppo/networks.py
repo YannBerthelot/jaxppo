@@ -167,12 +167,14 @@ class AgentState(TrainState):
 
 def get_adam_tx(
     learning_rate: Union[float, Callable[[int], float]] = 1e-3,
-    max_grad_norm: float = 0.5,
+    max_grad_norm: Optional[float] = 0.5,
     eps: float = 1e-5,
     clipped=True,
 ) -> GradientTransformationExtraArgs:
     """Return a clipped adam optimiser with the given parameters"""
-    if clipped:
+    if clipped and max_grad_norm is None:
+        raise ValueError("Gradient clipping requested but no norm provided.")
+    if clipped and max_grad_norm is not None:
         return optax.chain(
             optax.clip_by_global_norm(max_grad_norm),
             optax.inject_hyperparams(optax.adam)(learning_rate=learning_rate, eps=eps),

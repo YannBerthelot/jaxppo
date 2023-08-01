@@ -30,6 +30,8 @@ class PPOConfig(BaseModel):
     ent_coef: float = 0.01
     logging_config: Optional[LoggingConfig] = None
     num_episode_test: int = 20
+    anneal_lr: bool = True
+    max_grad_norm: Optional[float] = 0.5
 
     @field_validator("env_id")
     @classmethod
