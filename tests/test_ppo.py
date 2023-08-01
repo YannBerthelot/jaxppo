@@ -122,7 +122,7 @@ def test_ppo_train_and_test_shared_network():
         shared_network=True,
         vf_coef=0.5,
     )
-    agent.train(seed=42, test=False)
+    agent.train(seed=42, test=True)
 
 
 def test_ppo_train_and_test():

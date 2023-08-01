@@ -49,8 +49,6 @@ def _env_step_pre_partial(
     _: Any,
     actor_network: Network,
     critic_network: Network,
-    action_key: random.PRNGKeyArray,
-    step_key: random.PRNGKeyArray,
     env: Environment,
     env_params: EnvParams,
     num_envs: int,
@@ -89,10 +87,12 @@ def _env_step_pre_partial(
     else:
         pi = actor_network.apply(actor_state.params, last_obs)
         value = critic_network.apply(critic_state.params, last_obs)
+    rng, action_key = jax.random.split(rng)
     action = pi.sample(seed=action_key)
     log_prob = pi.log_prob(action)
 
     # STEP ENV
+    rng, step_key = jax.random.split(rng)
     rng_step = jax.random.split(step_key, num_envs)
     obsv, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None))(
         rng_step, env_state, action, env_params
@@ -268,7 +268,6 @@ def _loss_fn_pre_partial(
     loss_actor = -jnp.minimum(loss_actor1, loss_actor2)
     loss_actor = loss_actor.mean()
     entropy = pi.entropy().mean()
-
     policy_loss = loss_actor - ent_coef * entropy
 
     value_losses = jnp.square(targets - value)
@@ -279,9 +278,9 @@ def _loss_fn_pre_partial(
         value_losses_clipped = jnp.square(value_pred_clipped - targets)
         value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
     else:
-        value_loss = 0.5 * value_losses.mean()
-
-    return policy_loss + vf_coef * value_loss, (
+        value_loss = value_losses.mean()
+    total_loss = policy_loss + vf_coef * value_loss
+    return total_loss, (
         policy_loss,
         value_loss,
         loss_actor,
@@ -429,12 +428,12 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
              this epoch and the permutation random key) and losses for logging.
     """
     actor_state, critic_state, traj_batch, advantages, targets, rng = update_state
-    rng, _rng = jax.random.split(rng)
+    rng, permutation_key = jax.random.split(rng)
     batch_size = minibatch_size * num_minibatches
     assert (
         batch_size == num_steps * num_envs
     ), "batch size must be equal to number of steps * number of envs"
-    permutation = jax.random.permutation(_rng, batch_size)
+    permutation = jax.random.permutation(permutation_key, batch_size)
     batch = (traj_batch, advantages, targets)
     batch = jax.tree_util.tree_map(
         lambda x: x.reshape((batch_size,) + x.shape[2:]), batch
@@ -481,13 +480,10 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     _: Any,
     actor_network: Network,
     critic_network: Network,
-    action_key: random.PRNGKeyArray,
-    step_key: random.PRNGKeyArray,
     env: Environment,
     env_params: EnvParams,
     gamma: float,
     gae_lambda: float,
-    permutation_key: random.PRNGKeyArray,
     minibatch_size: int,
     num_minibatches: int,
     ent_coef: float,
@@ -513,13 +509,10 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         _ (Any): Unused parameter, just here for having an axis for vectorizing.
         actor_network (Network): The actor network.
         critic_network (Network): The critic network.
-        action_key (random.PRNGKeyArray): The random key for action sampling.
-        step_key (random.PRNGKeyArray): The random key for step sampling.
         env (Environment): The gymnax environment to train on
         env_params (EnvParams): The gymnax environment parameters.
         gamma (float): The discount factor.
         gae_lambda (float): The gae lambda parameter for advantage computation.
-        permutation_key (random.PRNGKeyArray): The random key for batch sampling.
         minibatch_size (int): The minibatch size (computed as \
             num_envs * num_steps // num_minibatches).
         num_minibatches (int): The number of minibatches in each epoch \
@@ -537,12 +530,11 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
                   and Env states, your last observation and the new random key).
             and a metric dict.
     """
+
     _env_step = partial(
         _env_step_pre_partial,
         actor_network=actor_network,
         critic_network=critic_network,
-        action_key=action_key,
-        step_key=step_key,
         env=env,
         env_params=env_params,
         num_envs=num_envs,
@@ -565,16 +557,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
 
     # UPDATE NETWORK
 
-    update_state = (
-        actor_state,
-        critic_state,
-        traj_batch,
-        advantages,
-        targets,
-        permutation_key,
-    )
-    if log:
-        jax.debug.callback(wandb_log, traj_batch.info, num_envs)
+    update_state = (actor_state, critic_state, traj_batch, advantages, targets, rng)
 
     _update_epoch = partial(
         _update_epoch_pre_partial,
@@ -595,8 +578,13 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     actor_state = update_state[0]
     critic_state = update_state[1]
     traj_batch = update_state[2]
+
+    if log:
+        jax.debug.callback(wandb_log, traj_batch.info, num_envs)
+
     metric = traj_batch.info
     rng = update_state[-1]
+
     runner_state = (actor_state, critic_state, env_state, last_obs, rng)
     return runner_state, metric
 
@@ -659,7 +647,6 @@ def make_train(  # pylint: disable=W0102, R0913
 
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
-    batch_size = num_envs * num_steps
     if isinstance(env_id, str):
         env_id, env_params = gymnax.make(env_id)
     env = LogWrapper(FlattenObservationWrapper(env_id))
@@ -671,14 +658,10 @@ def make_train(  # pylint: disable=W0102, R0913
         # INIT NETWORK
 
         (
-            key,
+            rng,
             actor_key,
             critic_key,
-            action_key,
-            permutation_key,
-            reset_key,
-            step_key,
-        ) = random.split(key, num=7)
+        ) = random.split(key, num=3)
         actor_network, critic_network = init_networks(
             env=env,
             actor_architecture=actor_architecture,
@@ -691,7 +674,7 @@ def make_train(  # pylint: disable=W0102, R0913
                 initial_learning_rate=learning_rate,
                 num_minibatches=num_minibatches,
                 update_epochs=update_epochs,
-                num_updates=total_timesteps // batch_size,
+                num_updates=num_updates,
             )
             tx = get_adam_tx(learning_rate=scheduler, max_grad_norm=max_grad_norm)
         else:
@@ -709,30 +692,27 @@ def make_train(  # pylint: disable=W0102, R0913
         )
 
         # INIT ENV
+        rng, reset_key = jax.random.split(rng)
         reset_rng = jax.random.split(reset_key, num_envs)
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
 
         # TRAIN LOOP
 
-        _, _rng = jax.random.split(key)
         runner_state = (
             actor_state,
             critic_state,
             env_state,
             obsv,
-            _rng,
+            rng,
         )
         _update_step = partial(
             _update_step_pre_partial,
             actor_network=actor_network,
             critic_network=critic_network,
-            action_key=action_key,
-            step_key=step_key,
             env=env,
             env_params=env_params,
             gamma=gamma,
             gae_lambda=gae_lambda,
-            permutation_key=permutation_key,
             minibatch_size=minibatch_size,
             num_minibatches=num_minibatches,
             ent_coef=ent_coef,
@@ -897,7 +877,10 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-        pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+        if self.config.shared_network:
+            pi, _ = self._actor_state.apply_fn(self._actor_state.params, obs)
+        else:
+            pi = self._actor_state.apply_fn(self._actor_state.params, obs)
         return pi.sample(seed=key)
 
     def test(self, n_episodes: int, seed: int):
@@ -960,12 +943,11 @@ if __name__ == "__main__":
         logging_config=logging_config,
         total_timesteps=int(1e6),
         num_envs=num_envs,
-        actor_architecture=["64", "tanh", "64", "tanh"],
-        critic_architecture=["64", "tanh", "64", "tanh"],
+        actor_architecture=["64", "relu", "64", "relu"],
         clip_coef_vf=None,
         anneal_lr=False,
         shared_network=True,
         vf_coef=0.5,
     )
-    agent.train(seed=42, test=False)
+    agent.train(seed=0, test=False)
     wandb.finish()
