@@ -6,7 +6,6 @@ from typing import List, TypeAlias, Union
 import flax.linen as nn
 import gymnasium as gym
 import jax
-import jax.numpy as jnp
 import jaxlib
 import pytest
 from jax import random
@@ -15,9 +14,9 @@ from jaxppo.networks import (
     Network,
     get_adam_tx,
     init_actor_and_critic_state,
-    init_agent_state,
     init_networks,
     predict_probs,
+    predict_probs_and_value,
     predict_value,
 )
 from jaxppo.utils import get_num_actions
@@ -95,6 +94,28 @@ def test_critic_init(setup_simple_critic):
     check_nn_is_equal(critic.architecture.layers, expected_critic.layers)
 
 
+def test_share_layer_init():
+    """Check that the network architectures matches the requested architecture"""
+
+    architecture = ["64", "tanh", "32", "relu"]
+    actor_critic = Network(
+        input_architecture=architecture,
+        actor=True,
+        shared_network=True,
+        num_of_actions=2,
+    )
+
+    expected_network = nn.Sequential(
+        [
+            nn.Dense(64),
+            nn.tanh,
+            nn.Dense(32),
+            nn.relu,
+        ]
+    )
+    check_nn_is_equal(actor_critic.architecture.layers, expected_network.layers)
+
+
 def test_network_init():
     env = gym.make("CartPole-v1")
     num_actions = 2
@@ -124,37 +145,6 @@ def test_network_init():
     check_nn_is_equal(critic.architecture.layers, expected_critic.layers)
 
 
-@pytest.fixture
-def setup_agent_state():
-    env = gym.make("CartPole-v1")
-    actor_architecture = ["32", "tanh", "32", "tanh"]
-    critic_architecture = ["32", "relu", "32", "relu"]
-    actor, critic = init_networks(env, actor_architecture, critic_architecture)
-
-    key = random.PRNGKey(42)
-    actor_key, critic_key = random.split(key, num=2)
-    tx = get_adam_tx()
-    agent_state = init_agent_state(
-        actor=actor,
-        critic=critic,
-        actor_key=actor_key,
-        critic_key=critic_key,
-        env=env,
-        tx=tx,
-    )
-    return agent_state
-
-
-def test_init_agent_state(setup_agent_state):
-    env = gym.make("CartPole-v1")
-    obs = env.reset()[0]
-    agent_state = setup_agent_state
-    probs = agent_state.actor_fn(agent_state.params.actor_params, obs).probs
-    value = agent_state.critic_fn(agent_state.params.critic_params, obs)
-    assert len(probs) == get_num_actions(env)
-    assert len(value) == 1
-
-
 def test_predict_value():
     env = gym.make("CartPole-v1")
     actor_architecture = ["32", "tanh", "32", "tanh"]
@@ -174,12 +164,12 @@ def test_predict_value():
     )
     obs = env.reset()[0]
     value = predict_value(
-        critc_state=critic_state, critic_params=critic_state.params, obs=obs
+        critic_state=critic_state, critic_params=critic_state.params, obs=obs
     )
     assert isinstance(value, jax.Array)
 
 
-def test_predict_obs():
+def test_predict_probs():
     env = gym.make("CartPole-v1")
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
@@ -187,8 +177,6 @@ def test_predict_obs():
         env,
         actor_architecture,
         critic_architecture,
-        categorical_output=True,
-        squeeze_value=True,
     )
 
     key = random.PRNGKey(42)
@@ -208,3 +196,29 @@ def test_predict_obs():
     )
     assert isinstance(probs, jax.Array)
     assert len(probs) == get_num_actions(env)
+
+
+def test_shared_predict():
+    env = gym.make("CartPole-v1")
+    actor_architecture = ["32", "tanh", "32", "tanh"]
+    actor_critic, _ = init_networks(env, actor_architecture, shared_network=True)
+
+    key = random.PRNGKey(42)
+    actor_key, _ = random.split(key, num=2)
+    tx = get_adam_tx()
+    actor_critic_state, _ = init_actor_and_critic_state(
+        actor_network=actor_critic,
+        actor_key=actor_key,
+        shared_network=True,
+        env=env,
+        tx=tx,
+    )
+    obs = env.reset()[0]
+    probs, val = predict_probs_and_value(
+        actor_critic_state=actor_critic_state,
+        actor_critic_params=actor_critic_state.params,
+        obs=obs,
+    )
+    assert isinstance(probs, jax.Array)
+    assert len(probs) == get_num_actions(env)
+    assert isinstance(val, jax.Array)

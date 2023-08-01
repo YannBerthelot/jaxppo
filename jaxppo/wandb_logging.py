@@ -32,7 +32,9 @@ def init_logging(logging_config: LoggingConfig):
 
 def wandb_log(info, num_envs):
     """Extract meaningful values from the info buffer and log them into wandb"""
-    return_values = info["returned_episode_returns"][info["returned_episode"]]
+    return_values = info["returned_episode_returns"][
+        info["returned_episode"]
+    ]  # get episodes that have finished
     timestep = jnp.max(info["timestep"]) * num_envs
     wandb.log(
         {"Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep}
