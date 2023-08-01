@@ -27,6 +27,7 @@ class PPOConfig(BaseModel):
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_coef: float = 0.2
+    clip_coef_vf: Optional[float] = 0.2
     ent_coef: float = 0.01
     logging_config: Optional[LoggingConfig] = None
     num_episode_test: int = 20
