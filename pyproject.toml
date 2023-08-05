@@ -72,7 +72,8 @@ commands_pre =
     poetry install
 
 [testenv:testing]
-commands = poetry run pytest {toxinidir}/tests/ --import-mode importlib
+changedir = {envtmpdir}
+commands = poetry run pytest {toxinidir}
 
 [testenv:linting]
 deps = pre-commit
@@ -81,7 +82,7 @@ commands = pre-commit run --all-files
 
 [testenv:coverage]
 commands = 
-    poetry run coverage run --branch -m pytest {toxinidir}
+    poetry run coverage run --source=jaxppo --branch -m pytest {toxinidir}
     poetry run coverage report -m --fail-under 80
     poetry run coverage xml -o {toxinidir}/coverage.xml
 
