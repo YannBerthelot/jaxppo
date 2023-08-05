@@ -18,7 +18,7 @@ class PPOConfig(BaseModel):
     num_steps: int
     num_envs: int
     env_params: Optional[Any] = None
-    env_id: str | Environment | GymnaxWrapper
+    env_id: Any
     learning_rate: float
     num_minibatches: int = 4
     update_epochs: int = 4
@@ -35,6 +35,7 @@ class PPOConfig(BaseModel):
     max_grad_norm: Optional[float] = 0.5
     shared_network: bool = False
     vf_coef: Optional[float] = 0.5
+    advantage_normalization: bool = True
 
     @field_validator("vf_coef")
     @classmethod
@@ -53,14 +54,13 @@ class PPOConfig(BaseModel):
         cls, env_id: str | Environment | GymnaxWrapper, info: Any
     ) -> (str | Environment | GymnaxWrapper) | NoReturn:
         """Check that value environment is a valid gymnax env id, gymnax env, or gymnax wrapped env"""
-
         env_params = info.data["env_params"]
         if isinstance(env_id, str):
             return env_id
-        elif isinstance(env_id, Environment) or issubclass(
+        elif issubclass(env_id.__class__, Environment) or issubclass(
             env_id.__class__, GymnaxWrapper
         ):
-            if info.data is None:
+            if env_params is None:
                 raise ValueError("Missing EnvParams for pre-defined env")
             if "EnvParams" not in str(env_params.__class__):
                 raise ValueError(

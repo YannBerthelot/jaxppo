@@ -1,10 +1,9 @@
 # pylint: disable = missing-function-docstring, missing-module-docstring
-import logging
-import os
 from typing import List, TypeAlias, Union
 
 import flax.linen as nn
 import gymnasium as gym
+import gymnax
 import jax
 import jaxlib
 import pytest
@@ -117,7 +116,7 @@ def test_share_layer_init():
 
 
 def test_network_init():
-    env = gym.make("CartPole-v1")
+    env, _ = gymnax.make("CartPole-v1")
     num_actions = 2
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
@@ -146,13 +145,13 @@ def test_network_init():
 
 
 def test_predict_value():
-    env = gym.make("CartPole-v1")
+    env, env_params = gymnax.make("CartPole-v1")
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
     actor, critic = init_networks(env, actor_architecture, critic_architecture)
 
     key = random.PRNGKey(42)
-    actor_key, critic_key = random.split(key, num=2)
+    actor_key, critic_key, reset_key = random.split(key, num=3)
     tx = get_adam_tx()
     _, critic_state = init_actor_and_critic_state(
         actor_network=actor,
@@ -160,9 +159,11 @@ def test_predict_value():
         actor_key=actor_key,
         critic_key=critic_key,
         env=env,
-        tx=tx,
+        actor_tx=tx,
+        critic_tx=tx,
+        env_params=env_params,
     )
-    obs = env.reset()[0]
+    obs = env.reset(reset_key, env_params)[0]
     value = predict_value(
         critic_state=critic_state, critic_params=critic_state.params, obs=obs
     )
@@ -170,7 +171,7 @@ def test_predict_value():
 
 
 def test_predict_probs():
-    env = gym.make("CartPole-v1")
+    env, env_params = gymnax.make("CartPole-v1")
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
     actor, critic = init_networks(
@@ -180,7 +181,7 @@ def test_predict_probs():
     )
 
     key = random.PRNGKey(42)
-    actor_key, critic_key = random.split(key, num=2)
+    actor_key, critic_key, reset_key = random.split(key, num=3)
     tx = get_adam_tx()
     actor_state, _ = init_actor_and_critic_state(
         actor_network=actor,
@@ -188,9 +189,11 @@ def test_predict_probs():
         actor_key=actor_key,
         critic_key=critic_key,
         env=env,
-        tx=tx,
+        actor_tx=tx,
+        critic_tx=tx,
+        env_params=env_params,
     )
-    obs = env.reset()[0]
+    obs = env.reset(reset_key, env_params)[0]
     probs = predict_probs(
         actor_state=actor_state, actor_params=actor_state.params, obs=obs
     )
@@ -199,21 +202,22 @@ def test_predict_probs():
 
 
 def test_shared_predict():
-    env = gym.make("CartPole-v1")
+    env, env_params = gymnax.make("CartPole-v1")
     actor_architecture = ["32", "tanh", "32", "tanh"]
     actor_critic, _ = init_networks(env, actor_architecture, shared_network=True)
 
     key = random.PRNGKey(42)
-    actor_key, _ = random.split(key, num=2)
+    actor_key, reset_key = random.split(key, num=2)
     tx = get_adam_tx()
     actor_critic_state, _ = init_actor_and_critic_state(
         actor_network=actor_critic,
         actor_key=actor_key,
         shared_network=True,
         env=env,
-        tx=tx,
+        actor_tx=tx,
+        env_params=env_params,
     )
-    obs = env.reset()[0]
+    obs = env.reset(reset_key, env_params)[0]
     probs, val = predict_probs_and_value(
         actor_critic_state=actor_critic_state,
         actor_critic_params=actor_critic_state.params,

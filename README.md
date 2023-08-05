@@ -1,4 +1,4 @@
 # jaxppo
 
 
-SPLIT ACTOR AND CRITIC
+Investigate critic loss
