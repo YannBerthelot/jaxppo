@@ -145,7 +145,11 @@ class PPO:
             advantage_normalization=self.config.advantage_normalization,
         )
 
-        self._actor_state, self._critic_state, _, _, _ = train_jit(key)
+        runner_state = train_jit(key)
+        self._actor_state, self._critic_state = (
+            runner_state.actor_state,
+            runner_state.critic_state,
+        )
         if test:
             self.test(self.config.num_episode_test, seed=seed)
 
