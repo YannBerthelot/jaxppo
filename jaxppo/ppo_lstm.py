@@ -12,7 +12,7 @@ from jaxppo.config import PPOConfig
 from jaxppo.networks.networks import predict_probs as network_predict_probs
 from jaxppo.networks.networks import predict_probs_and_value
 from jaxppo.networks.networks import predict_value as network_predict_value
-from jaxppo.train import make_train
+from jaxppo.train_lstm import make_train
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
 
 
@@ -38,7 +38,6 @@ class PPO:
         logging_config: Optional[LoggingConfig] = None,
         env_params: Optional[EnvParams] = None,
         anneal_lr: bool = True,
-        shared_network: bool = False,
         vf_coef: Optional[float] = None,
         max_grad_norm: float = 0.5,
         advantage_normalization: bool = True,
@@ -89,7 +88,6 @@ class PPO:
             logging_config=logging_config,
             env_params=env_params,
             anneal_lr=anneal_lr,
-            shared_network=shared_network,
             vf_coef=vf_coef,
             max_grad_norm=max_grad_norm,
             advantage_normalization=advantage_normalization,
@@ -140,9 +138,10 @@ class PPO:
             env_params=self.config.env_params,
             anneal_lr=self.config.anneal_lr,
             max_grad_norm=self.config.max_grad_norm,
-            shared_network=self.config.shared_network,
             vf_coef=self.config.vf_coef,
             advantage_normalization=self.config.advantage_normalization,
+            recurrent="LSTM" in self.config.actor_architecture
+            or "LSTM" in self.config.critic_architecture,
         )
 
         runner_state = train_jit(key)
@@ -160,10 +159,6 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-        if self.config.shared_network:
-            return predict_probs_and_value(
-                self._actor_state, self._actor_state.params, obs
-            )[0]
         return network_predict_probs(self._actor_state, self._actor_state.params, obs)
 
     def predict_value(self, obs: jax.Array) -> jax.Array:
@@ -173,10 +168,6 @@ class PPO:
                 "Attempted to predict value without a critic state/training the agent"
                 " first"
             )
-        if self.config.shared_network:
-            return predict_probs_and_value(
-                self._actor_state, self._actor_state.params, obs
-            )[1]
         return network_predict_value(self._critic_state, self._critic_state.params, obs)
 
     def get_action(self, obs: jax.Array, key: random.PRNGKeyArray) -> jax.Array:
@@ -187,10 +178,8 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-        if self.config.shared_network:
-            pi, _ = self._actor_state.apply_fn(self._actor_state.params, obs)
-        else:
-            pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+
+        pi = self._actor_state.apply_fn(self._actor_state.params, obs)
         return pi.sample(seed=key)
 
     def test(self, n_episodes: int, seed: int):
@@ -233,14 +222,15 @@ if __name__ == "__main__":
     num_envs = 4
     num_steps = 2048
     env_id = "CartPole-v1"
-    logging_config = LoggingConfig("Jax PPO shared", "test", config={})
+    logging_config = LoggingConfig("Jax PPO LSTM", "test", config={})
     init_logging(logging_config=logging_config)
     sb3_batch_size = 64
     agent = PPO(
         env_id=env_id,
         learning_rate=3e-4,
         num_steps=num_steps,
-        num_minibatches=num_steps * num_envs // sb3_batch_size,
+        # num_minibatches=num_steps * num_envs // sb3_batch_size,
+        num_minibatches=128,
         update_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
@@ -253,7 +243,6 @@ if __name__ == "__main__":
         critic_architecture=["64", "tanh", "64", "tanh"],
         clip_coef_vf=None,
         anneal_lr=False,
-        shared_network=False,
         max_grad_norm=0.5,
         vf_coef=0.5,
     )

@@ -5,8 +5,6 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-jax.config.update("jax_enable_x64", True)
-
 
 def test_gymnax_and_gymnasium_match():
     """check that gymnax and gymnasium env work the same"""
@@ -19,9 +17,9 @@ def test_gymnax_and_gymnasium_match():
     obs_gym, _ = env_gym.reset(seed=seed)
     obs_gx, env_state = env_gx.reset(key, env_params)
     env_state = env_state.__class__(
-        *jnp.array(obs_gym, dtype=jnp.float64), time=jnp.array(0)
+        *jnp.array(obs_gym, dtype=jnp.float32), time=jnp.array(0)
     )
-    obs_gx = jnp.array(obs_gym, dtype=jnp.float64)
+    obs_gx = jnp.array(obs_gym, dtype=jnp.float32)
     assert jnp.allclose(obs_gym, obs_gx)
     action = 0
     done = False

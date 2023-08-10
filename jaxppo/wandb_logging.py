@@ -32,7 +32,7 @@ def init_logging(logging_config: LoggingConfig):
     )
 
 
-def wandb_log(info, metrics, num_envs, shared_network):
+def wandb_log(info, metrics, num_envs, shared_network=False):
     """Extract meaningful values from the info buffer and log them into wandb"""
     return_values = info["returned_episode_returns"][
         info["returned_episode"]

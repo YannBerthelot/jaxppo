@@ -9,7 +9,7 @@ import jaxlib
 import pytest
 from jax import random
 
-from jaxppo.networks import (
+from jaxppo.networks.networks import (
     Network,
     get_adam_tx,
     init_actor_and_critic_state,
@@ -26,8 +26,8 @@ ActivationFunction: TypeAlias = Union[
 
 
 def check_nn_is_equal(
-    nn_1: List[Union[nn.Dense, ActivationFunction]],
-    nn_2: List[Union[nn.Dense, ActivationFunction]],
+    nn_1: list[nn.Dense | ActivationFunction],
+    nn_2: list[nn.Dense | ActivationFunction],
 ) -> None:
     """
     Check if layers are equivalent:
