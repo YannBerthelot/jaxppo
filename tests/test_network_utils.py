@@ -6,11 +6,9 @@ from flax.linen.initializers import constant, orthogonal
 
 from jaxppo.networks.utils import (
     ActivationFunction,
-    ScannedDense,
     ScannedRNN,
     get_LSTM_from_string,
     parse_architecture,
-    Activation,
 )
 
 
@@ -26,7 +24,7 @@ def check_nn_is_equal(
     rng = jax.random.PRNGKey(42)
     for cell_1, cell_2 in zip(nn_1, nn_2):
         assert isinstance(cell_1, type(cell_2))
-        if isinstance(cell_1, (nn.linear.Dense, nn.OptimizedLSTMCell, ScannedDense)):
+        if isinstance(cell_1, (nn.linear.Dense, nn.OptimizedLSTMCell)):
             assert cell_1.features == cell_2.features
             assert jnp.allclose(
                 cell_1.kernel_init(rng, (cell_1.features, cell_1.features)),
@@ -38,36 +36,35 @@ def check_nn_is_equal(
             )
         elif isinstance(cell_1, ScannedRNN):
             assert cell_1.features == cell_2.features
-            assert cell_1.idx == cell_2.idx
         else:  # activation
-            assert cell_1.activation_fn == cell_2.activation_fn
+            assert cell_1 == cell_2
     return True
 
 
 def test_parse_simple_LSTM():
     LSTM_cell_description = "LSTM(128)"
-    expected_LSTM = ScannedRNN(128, 0)
-    LSTM_cell = get_LSTM_from_string(LSTM_cell_description, 0)
+    expected_LSTM = ScannedRNN(128)
+    LSTM_cell = get_LSTM_from_string(LSTM_cell_description)
     assert LSTM_cell.features == expected_LSTM.features
 
 
 def test_parse_LSTM_network():
     expected_network = [
-        ScannedDense(
+        nn.Dense(
             features=64,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         ),
-        Activation(nn.tanh),
-        ScannedDense(
+        nn.tanh,
+        nn.Dense(
             features=32,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         ),
-        Activation(nn.relu),
-        ScannedRNN(128, 0),
-        Activation(nn.relu),
-        ScannedDense(
+        nn.relu,
+        ScannedRNN(128),
+        nn.relu,
+        nn.Dense(
             features=1,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),

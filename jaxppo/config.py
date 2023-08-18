@@ -36,6 +36,7 @@ class PPOConfig(BaseModel):
     shared_network: bool = False
     vf_coef: Optional[float] = 0.5
     advantage_normalization: bool = True
+    lstm_hidden_size: int = 64
 
     @field_validator("vf_coef")
     @classmethod

@@ -41,6 +41,7 @@ class PPO:
         vf_coef: Optional[float] = None,
         max_grad_norm: float = 0.5,
         advantage_normalization: bool = True,
+        lstm_hidden_size: int = 64,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -91,6 +92,7 @@ class PPO:
             vf_coef=vf_coef,
             max_grad_norm=max_grad_norm,
             advantage_normalization=advantage_normalization,
+            lstm_hidden_size=lstm_hidden_size,
         )
 
         self._actor_state = None
@@ -140,14 +142,13 @@ class PPO:
             max_grad_norm=self.config.max_grad_norm,
             vf_coef=self.config.vf_coef,
             advantage_normalization=self.config.advantage_normalization,
-            recurrent="LSTM" in self.config.actor_architecture
-            or "LSTM" in self.config.critic_architecture,
+            lstm_hidden_size=self.config.lstm_hidden_size,
         )
 
         runner_state = train_jit(key)
         self._actor_state, self._critic_state = (
-            runner_state.actor_state,
-            runner_state.critic_state,
+            runner_state[0],
+            runner_state[1],
         )
         if test:
             self.test(self.config.num_episode_test, seed=seed)
@@ -220,22 +221,22 @@ if __name__ == "__main__":
     import wandb
 
     num_envs = 4
-    num_steps = 2048
+    num_steps = 128
     env_id = "CartPole-v1"
     logging_config = LoggingConfig("Jax PPO LSTM", "test", config={})
     init_logging(logging_config=logging_config)
-    sb3_batch_size = 64
+    sb3_batch_size = 128
     agent = PPO(
         env_id=env_id,
-        learning_rate=3e-4,
+        learning_rate=2.5e-4,
         num_steps=num_steps,
         # num_minibatches=num_steps * num_envs // sb3_batch_size,
-        num_minibatches=128,
-        update_epochs=10,
+        num_minibatches=4,
+        update_epochs=4,
         gamma=0.99,
         gae_lambda=0.95,
         clip_coef=0.2,
-        ent_coef=0.0,
+        ent_coef=0.01,
         logging_config=logging_config,
         total_timesteps=int(1e6),
         num_envs=num_envs,
@@ -245,6 +246,7 @@ if __name__ == "__main__":
         anneal_lr=False,
         max_grad_norm=0.5,
         vf_coef=0.5,
+        lstm_hidden_size=8,
     )
     agent.train(seed=1, test=False)
     wandb.finish()

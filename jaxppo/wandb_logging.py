@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import wandb
 
 os.environ["WANDB_SILENT"] = "false"
-os.environ["WANDB_START_METHOD"] = "thread"
+os.environ["WANDB_START_METHOD"] = "fork"
 
 
 @dataclass
@@ -25,14 +25,14 @@ def init_logging(logging_config: LoggingConfig):
     wandb.init(
         project=logging_config.project_name,
         name=logging_config.run_name,
-        save_code=True,
-        monitor_gym=True,
+        save_code=False,
+        monitor_gym=False,
         config=logging_config.config,
         mode=logging_config.mode,
     )
 
 
-def wandb_log(info, metrics, num_envs, shared_network=False):
+def wandb_log(info, metrics, num_envs):
     """Extract meaningful values from the info buffer and log them into wandb"""
     return_values = info["returned_episode_returns"][
         info["returned_episode"]
@@ -62,8 +62,6 @@ def wandb_log(info, metrics, num_envs, shared_network=False):
         "Losses/actor loss without entropy": simple_actor_loss.mean(),
         "Losses/entropy loss": entropy_loss.mean(),
     }
-    if shared_network:
-        losses_dict["Losses/total_loss"] = total_loss.mean()
     jax.debug.callback(log_variables, losses_dict)
 
 

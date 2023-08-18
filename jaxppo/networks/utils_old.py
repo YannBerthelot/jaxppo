@@ -16,6 +16,11 @@ ActivationFunction: TypeAlias = Union[
 ]
 
 
+class HiddenState(NamedTuple):
+    h: jnp.ndarray
+    c: jnp.ndarray
+
+
 def check_architecture(actor, num_of_actions):
     if actor and num_of_actions is None:
         raise ValueError("Actor mode is selected but no num_of_actions provided")
@@ -26,26 +31,27 @@ def check_architecture(actor, num_of_actions):
 
 
 def reset_hidden_state_where_episode_finished(resets, hidden_state, reset_hidden_state):
-    # h, c = hidden_state
-    # reset_h, reset_c = reset_hidden_state
-    return jnp.where(
+    h, c = hidden_state
+    reset_h, reset_c = reset_hidden_state
+    h = jnp.where(
         resets[:, np.newaxis],
-        reset_hidden_state,
-        hidden_state,
+        reset_h,
+        h,
     )
-    # c = jnp.where(
-    #     resets[:, np.newaxis],
-    #     reset_c,
-    #     c,
-    # )
-    # return h, c
+    c = jnp.where(
+        resets[:, np.newaxis],
+        reset_c,
+        c,
+    )
+    return h, c
 
 
 class ScannedRNN(nn.Module):
     features: int
+    idx: int  # idx of the LSTM amongst LSTM layers
 
     @functools.partial(
-        nn.scan,
+        nn.transforms.scan,
         variable_broadcast="params",
         in_axes=0,
         out_axes=0,
@@ -54,24 +60,53 @@ class ScannedRNN(nn.Module):
     @nn.compact
     def __call__(self, hidden_state, obs_and_resets):
         """Applies the module."""
-        obs, resets = obs_and_resets
-
+        obs, resets = obs_and_resets  # shape : (1,num_envs,obs_shape)
+        hidden_state = (
+            hidden_state.h,
+            hidden_state.c,
+        )
         reset_hidden_state = self.initialize_carry(
             jax.random.PRNGKey(0), num_envs=obs.shape[0]
         )
-
         hidden_state = reset_hidden_state_where_episode_finished(
             resets, hidden_state, reset_hidden_state
         )
-
-        cell = nn.GRUCell(self.features)
+        cell = nn.OptimizedLSTMCell(self.features)
         new_hidden_state, embedding = cell(hidden_state, obs)
-        return new_hidden_state, embedding
+        obs_and_resets = (embedding, resets)
+        h, c = new_hidden_state
+        return HiddenState(h=h, c=c), obs_and_resets
 
     def initialize_carry(self, key, num_envs):
-        return nn.GRUCell(self.features, parent=None).initialize_carry(
+        return nn.OptimizedLSTMCell(self.features, parent=None).initialize_carry(
             key, (num_envs, self.features)
         )
+
+
+class ScannedDense(nn.Module):
+    features: int
+    kernel_init: Any  # TODO : do actual typing
+    bias_init: Any  # TODO : do actual typing
+
+    @nn.compact
+    def __call__(self, hidden_state, obs_and_resets) -> Any:
+        obs, resets = obs_and_resets
+        embedding = nn.Dense(
+            self.features, kernel_init=self.kernel_init, bias_init=self.bias_init
+        )(obs)
+        obs_and_resets = (embedding, resets)
+        return hidden_state, obs_and_resets
+
+
+class Activation(nn.Module):
+    activation_fn: ActivationFunction
+
+    @nn.compact
+    def __call__(self, hidden_state, obs_and_resets):
+        obs, resets = obs_and_resets
+        embedding = self.activation_fn(obs)
+        obs_and_resets = (embedding, resets)
+        return hidden_state, obs_and_resets
 
 
 def has_numbers(inputString: str) -> bool:
@@ -87,7 +122,7 @@ def has_numbers(inputString: str) -> bool:
     return any(char.isdigit() for char in inputString)
 
 
-def get_LSTM_from_string(string: str) -> nn.OptimizedLSTMCell:
+def get_LSTM_from_string(string: str, idx: int) -> nn.OptimizedLSTMCell:
     """
     Parse the LSTM architecture to the actual LSTM layer
 
@@ -100,7 +135,7 @@ def get_LSTM_from_string(string: str) -> nn.OptimizedLSTMCell:
     """
     LSTM_description = re.search(r"\((.*?)\)", string).group(1)
     nb_neurons = int(LSTM_description)
-    return ScannedRNN(features=nb_neurons)
+    return ScannedRNN(features=nb_neurons, idx=idx)
 
 
 def parse_activation(activation: Union[str, ActivationFunction]) -> ActivationFunction:  # type: ignore[return]
@@ -113,14 +148,14 @@ def parse_activation(activation: Union[str, ActivationFunction]) -> ActivationFu
     match activation:
         case str():
             if activation in activation_matching:
-                return activation_matching[activation]
+                return Activation(activation_matching[activation])
             else:
                 raise ValueError(
                     f"Unrecognized activation name {activation}, acceptable activations"
                     f" names are : {activation_matching.keys()}"
                 )
         case activation if isinstance(activation, get_args(ActivationFunction)):
-            return activation
+            return Activation(activation)
         case _:
             raise ValueError(f"Unrecognized activation {activation}")
 
@@ -130,13 +165,13 @@ def parse_layer(
 ) -> Union[nn.Dense, ActivationFunction]:
     """Parse a layer representation into either a Dense or an activation function"""
     if str(layer).isnumeric():
-        return nn.Dense(
+        return ScannedDense(
             features=int(cast(str, layer)),
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )
     if "LSTM" in layer:
-        return get_LSTM_from_string(layer)
+        return get_LSTM_from_string(layer, idx)
     return parse_activation(activation=layer)
 
 

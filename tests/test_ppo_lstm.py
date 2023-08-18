@@ -55,8 +55,8 @@ def test_trained_ppo_pre_defined_env():
         num_envs=num_envs,
         env_id=env_id,
         learning_rate=learning_rate,
-        actor_architecture=["64", "tanh", "LSTM(32)", "tanh"],
-        critic_architecture=["64", "tanh", "LSTM(32)", "tanh"],
+        actor_architecture=["64", "tanh", "32", "tanh"],
+        critic_architecture=["64", "tanh", "32", "tanh"],
         env_params=env_params,
     )
     make_train(
@@ -84,8 +84,8 @@ def test_trained_ppo_pre_defined_wrapped_env():
         num_envs=num_envs,
         env_id=env_id,
         learning_rate=learning_rate,
-        actor_architecture=["64", "tanh", "LSTM(32)", "tanh"],
-        critic_architecture=["64", "tanh", "LSTM(32)", "tanh"],
+        actor_architecture=["64", "tanh", "32", "tanh"],
+        critic_architecture=["64", "tanh", "32", "tanh"],
         env_params=env_params,
     )
     make_train(
@@ -120,8 +120,8 @@ def test_trained_ppo_pre_defined_wrapped_env():
 def test_ppo_train():
     """Test that the ppo train function doesn't fail"""
     num_envs = 4
-    total_timesteps = int(1e6)
-    num_steps = 2048
+    total_timesteps = int(1e3)
+    num_steps = 32
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
     agent = PPO(
@@ -130,8 +130,8 @@ def test_ppo_train():
         num_envs=num_envs,
         env_id=env_id,
         learning_rate=learning_rate,
-        actor_architecture=["64", "tanh", "LSTM(32)", "tanh"],
-        critic_architecture=["64", "tanh", "LSTM(32)", "tanh"],
+        actor_architecture=["64", "tanh", "32", "tanh"],
+        critic_architecture=["64", "tanh", "32", "tanh"],
     )
     agent.train(seed=42, test=False)
 

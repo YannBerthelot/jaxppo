@@ -17,13 +17,10 @@ from jaxppo.networks.networks_lstm import (
     get_adam_tx,
     init_actor_and_critic_state,
     init_networks,
-    HiddenState,
 )
 from jaxppo.utils import annealed_linear_schedule, get_parameterized_schedule
 from jaxppo.wandb_logging import wandb_log
 from jaxppo.wrappers import FlattenObservationWrapper, LogWrapper
-
-RECURRENT = False
 
 
 class Transition(NamedTuple):
@@ -38,39 +35,67 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
-class RunnerState(NamedTuple):
-    """The current agent state used to step the env"""
+# class RunnerState(NamedTuple):
+#     """The current agent state used to step the env"""
 
-    actor_state: jnp.ndarray
-    critic_state: Optional[jnp.ndarray]
-    env_state: jnp.ndarray
-    last_obs: jnp.ndarray
-    last_done: jnp.ndarray
-    actor_hstate: HiddenState
-    critic_hstate: HiddenState
-    rng: random.PRNGKeyArray
+#     actor_state: jnp.ndarray
+#     critic_state: Optional[jnp.ndarray]
+#     env_state: jnp.ndarray
+#     last_obs: jnp.ndarray
+#     last_done: jnp.ndarray
+#     actor_hstate: jnp.ndarray
+#     critic_hstate: jnp.ndarray
+#     rng: random.PRNGKeyArray
 
-
-class UpdateState(NamedTuple):
-    """The current state of the updated parameters and the required variables\
-          for the update"""
-
-    actor_state: jnp.ndarray
-    critic_state: Optional[jnp.ndarray]
-    traj_batch: Transition
-    advantages: jnp.ndarray
-    targets: jnp.ndarray
-    rng: random.PRNGKeyArray
-    actor_hstate: HiddenState
-    critic_hstate: HiddenState
+RunnerState = tuple[
+    jnp.ndarray,
+    Optional[jnp.ndarray],
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    random.PRNGKeyArray,
+]
 
 
-class BatchInfo(NamedTuple):
-    traj_batch: Transition
-    advantages: jnp.ndarray
-    targets: jnp.ndarray
-    actor_hstate: Optional[HiddenState] = None
-    critic_hstate: Optional[HiddenState] = None
+# class UpdateState(NamedTuple):
+#     """The current state of the updated parameters and the required variables\
+#           for the update"""
+
+#     actor_state: jnp.ndarray
+#     critic_state: Optional[jnp.ndarray]
+#     traj_batch: Transition
+#     advantages: jnp.ndarray
+#     targets: jnp.ndarray
+#     rng: random.PRNGKeyArray
+#     actor_hstate: jnp.ndarray
+#     critic_hstate: jnp.ndarray
+
+
+UpdateState = tuple[
+    jnp.ndarray,
+    Optional[jnp.ndarray],
+    Transition,
+    jnp.ndarray,
+    jnp.ndarray,
+    random.PRNGKeyArray,
+    jnp.ndarray,
+    jnp.ndarray,
+]
+
+
+# class BatchInfo(NamedTuple):
+#     traj_batch: Transition
+#     advantages: jnp.ndarray
+#     targets: jnp.ndarray
+#     actor_hstate: Optional[jnp.ndarray] = None
+#     critic_hstate: Optional[jnp.ndarray] = None
+
+
+BatchInfo = tuple[
+    Transition, jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]
+]
 
 
 def _env_step_pre_partial(
@@ -106,22 +131,34 @@ def _env_step_pre_partial(
                 (actor state, critic state and env state)\
                 and the Transition buffer
     """
+    (
+        actor_state,
+        critic_state,
+        env_state,
+        last_obs,
+        last_done,
+        actor_hstate,
+        critic_hstate,
+        rng,
+    ) = runner_state
     actor_critic_input = (
-        runner_state.last_obs[np.newaxis, :],
-        runner_state.last_done[np.newaxis, :],
+        last_obs[np.newaxis, :],
+        last_done[np.newaxis, :],
     )
     # SELECT ACTION
-    actor_hstate, pi = runner_state.actor_state.apply_fn(
-        runner_state.actor_state.params,
-        runner_state.actor_hstate,
+    actor_hstate, pi = actor_state.apply_fn(
+        actor_state.params,
+        actor_hstate,
         actor_critic_input,
     )
-    critic_hstate, value = runner_state.critic_state.apply_fn(
-        runner_state.critic_state.params,
-        runner_state.critic_hstate,
+
+    critic_hstate, value = critic_state.apply_fn(
+        critic_state.params,
+        critic_hstate,
         actor_critic_input,
     )
-    rng, action_key = jax.random.split(runner_state.rng)
+
+    rng, action_key = jax.random.split(rng)
     action = pi.sample(seed=action_key)
     log_prob = pi.log_prob(action)
     value, action, log_prob = (
@@ -134,27 +171,26 @@ def _env_step_pre_partial(
     rng, step_key = jax.random.split(rng)
     rng_step = jax.random.split(step_key, num_envs)
     obsv, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None))(
-        rng_step, runner_state.env_state, action, env_params
+        rng_step, env_state, action, env_params
     )
-    transition = Transition(
-        done, action, value, reward, log_prob, runner_state.last_obs, info
+    transition = Transition(last_done, action, value, reward, log_prob, last_obs, info)
+    runner_state = (
+        actor_state,
+        critic_state,
+        env_state,
+        obsv,
+        done,
+        actor_hstate,
+        critic_hstate,
+        rng,
     )
-    runner_state = RunnerState(
-        actor_state=runner_state.actor_state,
-        critic_state=runner_state.critic_state,
-        env_state=env_state,
-        last_obs=obsv,
-        last_done=done,
-        actor_hstate=actor_hstate,
-        critic_hstate=critic_hstate,
-        rng=rng,
-    )
-    return runner_state, transition
+    return runner_state, (transition, (actor_hstate, critic_hstate))
 
 
 def _calculate_gae(
     traj_batch: Transition,
     last_val: jax.Array,
+    last_done: jax.Array,
     gamma: float,
     gae_lambda: float,
 ) -> tuple[jax.Array, jax.Array]:
@@ -189,9 +225,9 @@ def _calculate_gae(
                 the transition's values
         """
         # current estimation of gae + value at t+1 because we have working in reverse
-        gae, next_value = gae_and_next_value
+        gae, next_value, next_done = gae_and_next_value
 
-        next_state_is_non_terminal = 1.0 - transition.done
+        next_state_is_non_terminal = 1.0 - next_done
 
         delta = (
             transition.reward
@@ -201,14 +237,11 @@ def _calculate_gae(
         gae = delta + gamma * gae_lambda * next_state_is_non_terminal * gae
 
         # tuple is carry-over state for scan, gae after the comma is the actual return at the end of the scan
-        return (
-            gae,
-            transition.value,
-        ), gae
+        return (gae, transition.value, transition.done), gae
 
     _, advantages = jax.lax.scan(
         f=_get_advantages,
-        init=(jnp.zeros_like(last_val), last_val),
+        init=(jnp.zeros_like(last_val), last_val, last_done),
         xs=traj_batch,
         reverse=True,
         unroll=16,
@@ -243,24 +276,19 @@ def _actor_loss_fn_pre_partial(
               the sub-losses for logging
     """
     # RERUN NETWORK
-
-    if RECURRENT:
-        actor_hstate_0 = HiddenState(
-            h=batch_info.actor_hstate.h[0], c=batch_info.actor_hstate.c[0]
-        )
-    else:
-        actor_hstate_0 = None
+    traj_batch, advantages, targets, actor_hstate, critic_hstate = batch_info
     # actor_hstate_0 = {k: (v[0][0], v[1][0]) for k, v in batch_info.actor_hstate.items()} TODO : elucidate this
+
     _, pi = actor_network.apply(
         actor_params,
-        actor_hstate_0,
-        (batch_info.traj_batch.obs, batch_info.traj_batch.done),
+        actor_hstate,
+        (traj_batch.obs, traj_batch.done),
     )
-    log_prob = pi.log_prob(batch_info.traj_batch.action)
+    log_prob = pi.log_prob(traj_batch.action)
 
     # CALCULATE ACTOR LOSS
-    ratio = jnp.exp(log_prob - batch_info.traj_batch.log_prob)
-    gae = batch_info.advantages
+    ratio = jnp.exp(log_prob - traj_batch.log_prob)
+    gae = advantages
     if advantage_normalization:
         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
     loss_actor1 = -ratio * gae
@@ -302,33 +330,28 @@ def _critic_loss_fn_pre_partial(
     Returns:
         jax.Array: The critic/value loss.
     """
+    traj_batch, advantages, targets, actor_hstate, critic_hstate = batch_info
     # RERUN NETWORK
-    if RECURRENT:
-        critic_hstate_0 = HiddenState(
-            h=batch_info.critic_hstate.h[0], c=batch_info.critic_hstate.c[0]
-        )
-    else:
-        critic_hstate_0 = None
     _, value = critic_network.apply(
         critic_params,
-        critic_hstate_0,
-        (batch_info.traj_batch.obs, batch_info.traj_batch.done),
+        critic_hstate,
+        (traj_batch.obs, traj_batch.done),
     )
-    value_losses = (value - batch_info.targets) ** 2
+    value_losses = (value - targets) ** 2
 
     # CALCULATE VALUE LOSS
     if clip_coef_vf is not None:
-        value_pred_clipped = batch_info.traj_batch.value + (
-            value - batch_info.traj_batch.value
-        ).clip(-clip_coef_vf, clip_coef_vf)
-        value_losses_clipped = jnp.square(value_pred_clipped - batch_info.targets)
+        value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(
+            -clip_coef_vf, clip_coef_vf
+        )
+        value_losses_clipped = jnp.square(value_pred_clipped - targets)
         return 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean(), (
-            batch_info.targets.mean(),
+            targets.mean(),
             value_pred_clipped.mean(),
         )
     value_loss = 0.5 * value_losses.mean()
     auxiliaries = (
-        jax.lax.stop_gradient(batch_info.targets).mean(),
+        jax.lax.stop_gradient(targets).mean(),
         jax.lax.stop_gradient(value).mean(),
     )
     return value_loss, auxiliaries
@@ -363,6 +386,8 @@ def _update_minibatch_pre_partial(  # pylint: disable=R0914
         tuple[jax.Array, jax.Array, jax.Array, jax.Array] ]:\
               The updated actor and critic states, and the losses values for logging.
     """
+    traj_batch, advantages, targets, actor_hstate, critic_hstate = batch_info
+
     actor_state, critic_state = train_state
     _actor_loss_fn = partial(
         _actor_loss_fn_pre_partial,
@@ -394,7 +419,7 @@ def _update_minibatch_pre_partial(  # pylint: disable=R0914
         simple_actor_loss,
         entropy_loss,
         clip_fraction,
-        batch_info.advantages,
+        advantages,
         update_targets,
         values,
     )
@@ -443,41 +468,84 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
              transition buffer for this epoch, the advantages and target values for\
              this epoch and the permutation random key) and losses for logging.
     """
-
-    rng, permutation_key = jax.random.split(update_state.rng)
+    (
+        actor_state,
+        critic_state,
+        traj_batch,
+        advantages,
+        targets,
+        rng,
+        actor_hstate,
+        critic_hstate,
+    ) = update_state
+    rng, permutation_key = jax.random.split(rng)
     batch_size = minibatch_size * num_minibatches
     assert (
         batch_size == num_steps * num_envs
     ), "batch size must be equal to number of steps * number of envs"
     permutation = jax.random.permutation(permutation_key, batch_size)
+    initial_actor_hstate = actor_hstate[0][0]
+    initial_critic_hstate = critic_hstate[0][0]
     batch = (
-        update_state.actor_hstate,
-        update_state.critic_hstate,
-        update_state.traj_batch,
-        update_state.advantages,
-        update_state.targets,
+        actor_hstate,
+        critic_hstate,
+        traj_batch,
+        advantages,
+        targets,
     )
+
     shuffled_batch = jax.tree_util.tree_map(
-        lambda x: jnp.take(x, permutation, axis=1), batch
-    )
-    minibatches = jax.tree_util.tree_map(
-        lambda x: jnp.swapaxes(
-            jnp.reshape(
-                x,
-                [x.shape[0], num_minibatches, -1] + list(x.shape[2:]),
-            ),
-            1,
-            0,
+        lambda x: (
+            jnp.take(x, permutation)[:, np.newaxis]
+            if len(x.shape) == 2
+            else jnp.take(x.reshape((batch_size, x.shape[-1])), permutation, axis=0)
         ),
-        shuffled_batch,
+        batch,
     )
-    new_minibatches = BatchInfo(
-        actor_hstate=minibatches[0],
-        critic_hstate=minibatches[1],
-        traj_batch=minibatches[2],
-        advantages=minibatches[3],
-        targets=minibatches[4],
+
+    # minibatches = jax.tree_util.tree_map(
+    #     lambda x: jnp.swapaxes(
+    #         jnp.reshape(
+    #             x,
+    #             [1, num_minibatches, -1] + list(x.shape[2:]),
+    #         ),
+    #         1,
+    #         0,
+    #     ),
+    #     shuffled_batch,
+    # )
+
+    shuffled_traj_batch = jax.tree_util.tree_map(
+        lambda x: x.reshape(
+            [1, num_minibatches, -1]
+            if x.shape[-1] == 1
+            else [1, num_minibatches, -1, x.shape[-1]]
+        ).swapaxes(0, 1),
+        shuffled_batch[2],
     )
+
+    new_minibatches = (
+        shuffled_traj_batch,
+        shuffled_batch[3].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
+        shuffled_batch[4].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
+        shuffled_batch[0]
+        .reshape([1, num_minibatches, -1, actor_hstate.shape[-1]])
+        .swapaxes(0, 1),
+        shuffled_batch[1]
+        .reshape([1, num_minibatches, -1, critic_hstate.shape[-1]])
+        .swapaxes(0, 1),
+    )
+    # new_minibatches = (
+    #     shuffled_traj_batch,
+    #     shuffled_batch[3].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
+    #     shuffled_batch[4].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
+    #     initial_actor_hstate.reshape([1, -1, initial_actor_hstate.shape[-1]]).repeat(
+    #         num_minibatches, axis=0
+    #     ),
+    #     initial_critic_hstate.reshape([1, -1, initial_actor_hstate.shape[-1]]).repeat(
+    #         num_minibatches, axis=0
+    #     ),
+    # )
     _update_minibatch = partial(
         _update_minibatch_pre_partial,
         actor_network=actor_network,
@@ -490,20 +558,19 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
     )
     (actor_state, critic_state), metrics = jax.lax.scan(
         f=_update_minibatch,
-        init=(update_state.actor_state, update_state.critic_state),
+        init=(actor_state, critic_state),
         xs=new_minibatches,
     )
-    update_state = UpdateState(
-        actor_state=actor_state,
-        critic_state=critic_state,
-        traj_batch=update_state.traj_batch,
-        advantages=update_state.advantages,
-        targets=update_state.targets,
-        rng=rng,
-        actor_hstate=update_state.actor_hstate,
-        critic_hstate=update_state.critic_hstate,
+    update_state = (
+        actor_state,
+        critic_state,
+        traj_batch,
+        advantages,
+        targets,
+        rng,
+        actor_hstate,
+        critic_hstate,
     )
-
     return update_state, metrics
 
 
@@ -569,24 +636,32 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         env_params=env_params,
         num_envs=num_envs,
     )
-    initial_actor_hstate = runner_state.actor_hstate
-    initial_critic_hstate = runner_state.critic_hstate
+    initial_actor_hstate = runner_state[-3]
+    initial_critic_hstate = runner_state[-2]
     # COLLECT BATCH TRAJECTORIES
-    runner_state, traj_batch = jax.lax.scan(
+    runner_state, (traj_batch, (actor_hstate, critic_hstate)) = jax.lax.scan(
         f=_env_step, init=runner_state, xs=None, length=num_steps
     )
+    (
+        actor_state,
+        critic_state,
+        env_state,
+        last_obs,
+        last_done,
+        final_actor_hstate,
+        final_critic_hstate,
+        rng,
+    ) = runner_state
     # CALCULATE ADVANTAGE
     ac_in = (
-        runner_state.last_obs[np.newaxis, :],
-        runner_state.last_done[np.newaxis, :],
+        last_obs[np.newaxis, :],
+        last_done[np.newaxis, :],
     )
-    _, last_val = critic_network.apply(
-        runner_state.critic_state.params, runner_state.critic_hstate, ac_in
-    )
+    _, last_val = critic_network.apply(critic_state.params, final_critic_hstate, ac_in)
 
     last_val = last_val.squeeze(0)
     advantages, targets = _calculate_gae(
-        traj_batch, last_val, gamma=gamma, gae_lambda=gae_lambda
+        traj_batch, last_val, last_done, gamma=gamma, gae_lambda=gae_lambda
     )
 
     # UPDATE NETWORK
@@ -604,26 +679,19 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         vf_coef=vf_coef,
         advantage_normalization=advantage_normalization,
     )
-    if RECURRENT:
-        initial_actor_hstate = HiddenState(
-            h=initial_actor_hstate.h[None, :],
-            c=initial_actor_hstate.c[None, :],
-        )
-        initial_critic_hstate = HiddenState(
-            h=initial_critic_hstate.h[None, :],
-            c=initial_critic_hstate.c[None, :],
-        )
-    else:
-        actor_hstate, critic_hstate = None, None
-    update_state = UpdateState(
-        actor_state=runner_state.actor_state,
-        critic_state=runner_state.critic_state,
-        traj_batch=traj_batch,
-        advantages=advantages,
-        targets=targets,
-        rng=runner_state.rng,
-        actor_hstate=initial_actor_hstate,
-        critic_hstate=initial_critic_hstate,
+    # initial_actor_hstate, initial_critic_hstate = (
+    #     initial_actor_hstate[None, :],
+    #     initial_critic_hstate[None, :],
+    # )
+    update_state = (
+        actor_state,
+        critic_state,
+        traj_batch,
+        advantages,
+        targets,
+        rng,
+        actor_hstate,
+        critic_hstate,
     )
     update_state, metrics = jax.lax.scan(
         f=_update_epoch,
@@ -631,20 +699,29 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         xs=None,
         length=update_epochs,
     )
+    (
+        actor_state,
+        critic_state,
+        _,
+        _,
+        _,
+        rng,
+        _,
+        _,
+    ) = update_state
     if log:
         jax.debug.callback(wandb_log, traj_batch.info, metrics, num_envs)
 
     metric = traj_batch.info
-    # TODO : check if that's correct to take 0 here?
-    runner_state = RunnerState(
-        actor_state=update_state.actor_state,
-        critic_state=update_state.critic_state,
-        env_state=runner_state.env_state,
-        last_obs=runner_state.last_obs,
-        last_done=runner_state.last_done,
-        actor_hstate=runner_state.actor_hstate,
-        critic_hstate=runner_state.critic_hstate,
-        rng=update_state.rng,
+    runner_state = (
+        actor_state,
+        critic_state,
+        env_state,
+        last_obs,
+        last_done,
+        final_actor_hstate,  # TODO : switch to the last hidden state?
+        final_critic_hstate,
+        rng,
     )
     return runner_state, metric
 
@@ -670,7 +747,7 @@ def make_train(  # pylint: disable=W0102, R0913
     max_grad_norm: Optional[float] = 0.5,
     vf_coef: Optional[float] = None,
     advantage_normalization: bool = True,
-    recurrent: bool = False,
+    lstm_hidden_size: int = 8,
 ) -> Callable[
     ..., tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray]
 ]:
@@ -724,6 +801,7 @@ def make_train(  # pylint: disable=W0102, R0913
             actor_architecture=actor_architecture,
             critic_architecture=critic_architecture,
             multiple_envs=num_envs > 1,
+            lstm_hidden_size=lstm_hidden_size,
         )
         if anneal_lr:
             scheduler = get_parameterized_schedule(
@@ -752,6 +830,7 @@ def make_train(  # pylint: disable=W0102, R0913
                     learning_rate=scheduler, max_grad_norm=max_grad_norm
                 ),
                 env_params=env_params,
+                lstm_hidden_size=lstm_hidden_size,
             )
         )
         # INIT ENV
@@ -759,16 +838,17 @@ def make_train(  # pylint: disable=W0102, R0913
         reset_rng = jax.random.split(reset_key, num_envs)
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
         # TRAIN LOOP
+        last_done = jnp.zeros(num_envs, dtype=bool)
         rng, runner_rng = jax.random.split(rng)
-        runner_state = RunnerState(
-            actor_state=actor_state,
-            critic_state=critic_state,
-            env_state=env_state,
-            last_obs=obsv,
-            last_done=jnp.zeros(num_envs, dtype=bool),
-            actor_hstate=actor_hstate,
-            critic_hstate=critic_hstate,
-            rng=runner_rng,
+        runner_state = (
+            actor_state,
+            critic_state,
+            env_state,
+            obsv,
+            last_done,
+            actor_hstate,
+            critic_hstate,
+            runner_rng,
         )
 
         _update_step = partial(

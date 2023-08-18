@@ -14,13 +14,12 @@ from gymnax.environments.environment import Environment, EnvParams
 from jax import Array, random
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
-
+import functools
 from jaxppo.networks.utils import (
     ActivationFunction,
     ScannedRNN,
     check_architecture,
     parse_architecture,
-    HiddenState,
 )
 from jaxppo.utils import get_num_actions
 
@@ -36,6 +35,7 @@ class NetworkLSTM(nn.Module):
     num_of_actions: Optional[int] = None
     shared_network: bool = False
     multiple_envs: bool = True
+    lstm_hidden_size: int = 64
 
     @property
     def extractor_architecture(self) -> nn.Sequential:
@@ -43,14 +43,24 @@ class NetworkLSTM(nn.Module):
         check_architecture(self.actor, self.num_of_actions)
         return parse_architecture(self.input_architecture)
 
+    @functools.partial(
+        nn.scan,
+        variable_broadcast="params",
+        in_axes=0,
+        out_axes=0,
+        split_rngs={"params": False},
+    )
     @nn.compact
     def __call__(
         self, hiddens: list[Array], actor_critic_in: tuple[Array, Array]
     ) -> tuple[list[Array], Array]:
-        extractor_hiddens, (embedding, _) = nn.Sequential(self.extractor_architecture)(
-            hiddens, actor_critic_in
+        obs, dones = actor_critic_in
+        # embedding = nn.Sequential(self.extractor_architecture)(obs)
+        embedding = obs
+        extractor_hiddens, embedding = ScannedRNN(self.lstm_hidden_size)(
+            hiddens, (embedding, dones)
         )
-
+        embedding = nn.Sequential(self.extractor_architecture)(embedding)
         if self.actor:
             logits = nn.Dense(
                 self.num_of_actions,
@@ -67,17 +77,13 @@ class NetworkLSTM(nn.Module):
 
 
 def init_hidden_state(
+    layer,
     num_envs: int,
     rng: jax.random.PRNGKey,
-    network: NetworkLSTM,
-) -> HiddenState:
+) -> tuple:
     """Initialize the hidden state for every LSTM layer in the network."""
-    for layer in network.extractor_architecture:
-        if isinstance(layer, ScannedRNN):
-            rng, _rng = jax.random.split(rng)
-            h, c = layer.initialize_carry(_rng, num_envs=num_envs)
-            return HiddenState(h=h, c=c)
-    return None
+    rng, _rng = jax.random.split(rng)
+    return layer.initialize_carry(_rng, num_envs=num_envs)
 
 
 def init_networks(
@@ -86,6 +92,7 @@ def init_networks(
     critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
     shared_network: bool = False,
     multiple_envs: bool = True,
+    lstm_hidden_size: int = 64,
 ) -> Tuple[NetworkLSTM, Optional[NetworkLSTM]]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
@@ -93,9 +100,13 @@ def init_networks(
         input_architecture=actor_architecture,
         actor=True,
         num_of_actions=get_num_actions(env),
+        lstm_hidden_size=lstm_hidden_size,
     )
     critic = NetworkLSTM(
-        input_architecture=critic_architecture, actor=False, multiple_envs=multiple_envs
+        input_architecture=critic_architecture,
+        actor=False,
+        multiple_envs=multiple_envs,
+        lstm_hidden_size=lstm_hidden_size,
     )
     return actor, critic
 
@@ -131,14 +142,15 @@ def init_actor_and_critic_state(
     critic_network: Optional[NetworkLSTM] = None,
     critic_key: Optional[random.PRNGKeyArray] = None,
     shared_network: bool = False,
+    lstm_hidden_size: int = 64,
 ) -> Tuple[TrainState, Optional[TrainState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     init_x = (
         jnp.zeros((1, num_envs, *env.observation_space(env_params).shape)),
         jnp.zeros((1, num_envs)),
     )
-    init_hstate_actor = init_hidden_state(num_envs, rng, actor_network)
-    init_hstate_critic = init_hidden_state(num_envs, rng, critic_network)
+    init_hstate_actor = init_hidden_state(ScannedRNN(lstm_hidden_size), num_envs, rng)
+    init_hstate_critic = init_hidden_state(ScannedRNN(lstm_hidden_size), num_envs, rng)
     if critic_network is None or critic_key is None:
         raise ValueError(
             "Critic network and key should be defined if not using                 "
