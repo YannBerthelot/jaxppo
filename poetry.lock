@@ -1262,7 +1262,7 @@ pytest = "^7.4.0"
 type = "git"
 url = "https://github.com/YannBerthelot/ProbingEnvironments.git"
 reference = "gymnax"
-resolved_reference = "9e7ea4855f927824f72d4922b038d0f665df4dcc"
+resolved_reference = "51d28d1cb6ba7e603200bc1c4dc265809a069a85"
 
 [[package]]
 name = "protobuf"
@@ -2036,4 +2036,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "b017119077fe9450a96eafb1e91d31c5b84c56c46e540c1611bd66f4edc02ab4"
+content-hash = "aff47be2bcada6acb58a31bc505d533c8d0120d4e67ae59fec69470395351957"
