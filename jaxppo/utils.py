@@ -20,12 +20,7 @@ def get_env_action_shape(
     Get the shape of the action space of a gym env
     (Number of actions if discrete, else the shape of the continuous actions)
     """
-    if isinstance(env, (Environment, LogWrapper)):
-        action_space = env.action_space()
-    else:
-        action_space = (
-            env.single_action_space if "is_vector_env" in dir(env) else env.action_space  # type: ignore[union-attr]
-        )
+    action_space = env.action_space()
     if isinstance(action_space, (gymnax.environments.spaces.Discrete)):
         action_shape = ()
     elif isinstance(action_space, gym.spaces.Discrete):
@@ -41,17 +36,9 @@ def get_env_observation_shape(
     """
     Get the shape of the observation space of a gym env (or Vec Env)
     """
-    if isinstance(env, (Environment, LogWrapper)):
-        if env_params is None:
-            raise ValueError("No env params provided for gymnax env")
-        observation_space = env.observation_space(env_params)
-
-    else:
-        observation_space = (
-            env.single_observation_space
-            if "is_vector_env" in dir(env)
-            else env.observation_space  # type: ignore[union-attr]
-        )
+    if env_params is None:
+        raise ValueError("No env params provided for gymnax env")
+    observation_space = env.observation_space(env_params)
     return cast(Tuple[int], observation_space.shape)
 
 
@@ -60,30 +47,15 @@ def sample_obs_space(
     env_params: EnvParams = None,
 ) -> Any:
     """Sample an action from an environment"""
-    if isinstance(env, (Environment, LogWrapper)):
-        key = random.PRNGKey(42)
-        return env.observation_space(env_params).sample(key)
-    else:
-        observation_space = (
-            env.single_observation_space
-            if "is_vector_env" in dir(env)
-            else env.observation_space  # type: ignore[union-attr]
-        )
-        return observation_space.sample()
+    key = random.PRNGKey(42)
+    return env.observation_space(env_params).sample(key)
 
 
 def get_num_actions(
     env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
 ) -> int:
     """Get the number of actions (discrete or continuous) in a gym env"""
-    if isinstance(env, (Environment, LogWrapper)):
-        action_space = env.action_space()
-    else:
-        action_space = (
-            env.single_action_space
-            if "is_vector_env" in dir(env)
-            else env.action_space  # type: ignore[union-attr]
-        )
+    action_space = env.action_space()
     if isinstance(
         action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
     ):

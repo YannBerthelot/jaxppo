@@ -1,30 +1,30 @@
 """Networks initialization"""
-from typing import Callable, Optional, Sequence, Tuple, Union, NamedTuple
+from typing import Callable, Optional, Sequence, Tuple, Union
 
 import distrax
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 from flax.core import FrozenDict
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams
-from jax import Array, random
+from jax import Array
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
-import functools
+
 from jaxppo.networks.utils import (
     ActivationFunction,
     ScannedRNN,
     check_architecture,
     parse_architecture,
 )
+from jaxppo.types_rnn import HiddenState
 from jaxppo.utils import get_num_actions
 
 
-class NetworkLSTM(nn.Module):
+class NetworkRNN(nn.Module):
     """
     Generic network that can be actor or critic based on value of "actor" parameter.
     If it's an actor, you have to provide the num_of_actions
@@ -43,19 +43,12 @@ class NetworkLSTM(nn.Module):
         check_architecture(self.actor, self.num_of_actions)
         return parse_architecture(self.input_architecture)
 
-    @functools.partial(
-        nn.scan,
-        variable_broadcast="params",
-        in_axes=0,
-        out_axes=0,
-        split_rngs={"params": False},
-    )
     @nn.compact
     def __call__(
         self, hiddens: list[Array], actor_critic_in: tuple[Array, Array]
-    ) -> tuple[list[Array], Array]:
+    ) -> tuple[list[HiddenState], Array]:
         obs, dones = actor_critic_in
-        # embedding = nn.Sequential(self.extractor_architecture)(obs)
+
         embedding = obs
         extractor_hiddens, embedding = ScannedRNN(self.lstm_hidden_size)(
             hiddens, (embedding, dones)
@@ -80,29 +73,28 @@ def init_hidden_state(
     layer,
     num_envs: int,
     rng: jax.random.PRNGKey,
-) -> tuple:
-    """Initialize the hidden state for every LSTM layer in the network."""
+) -> HiddenState:
+    """Initialize the hidden state for the recurrent layer of the network."""
     rng, _rng = jax.random.split(rng)
-    return layer.initialize_carry(_rng, num_envs=num_envs)
+    return layer.initialize_carry(_rng, num_envs)
 
 
 def init_networks(
     env: Environment,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
-    critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
-    shared_network: bool = False,
+    critic_architecture: Sequence[Union[str, ActivationFunction]],
     multiple_envs: bool = True,
     lstm_hidden_size: int = 64,
-) -> Tuple[NetworkLSTM, Optional[NetworkLSTM]]:
+) -> Tuple[NetworkRNN, NetworkRNN]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
-    actor = NetworkLSTM(
+    actor = NetworkRNN(
         input_architecture=actor_architecture,
         actor=True,
         num_of_actions=get_num_actions(env),
         lstm_hidden_size=lstm_hidden_size,
     )
-    critic = NetworkLSTM(
+    critic = NetworkRNN(
         input_architecture=critic_architecture,
         actor=False,
         multiple_envs=multiple_envs,
@@ -133,29 +125,24 @@ def init_actor_and_critic_state(
     env_params: EnvParams,
     rng: jax.random.PRNGKey,
     num_envs: int,
-    actor_network: NetworkLSTM,
-    actor_key: random.PRNGKeyArray,
+    actor_network: NetworkRNN,
     actor_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
-    critic_tx: Optional[
-        Union[GradientTransformationExtraArgs, GradientTransformation]
-    ] = None,
-    critic_network: Optional[NetworkLSTM] = None,
-    critic_key: Optional[random.PRNGKeyArray] = None,
-    shared_network: bool = False,
+    critic_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
+    critic_network: NetworkRNN,
     lstm_hidden_size: int = 64,
-) -> Tuple[TrainState, Optional[TrainState]]:
+) -> Tuple[TrainState, Optional[TrainState], HiddenState, HiddenState]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     init_x = (
         jnp.zeros((1, num_envs, *env.observation_space(env_params).shape)),
         jnp.zeros((1, num_envs)),
     )
-    init_hstate_actor = init_hidden_state(ScannedRNN(lstm_hidden_size), num_envs, rng)
-    init_hstate_critic = init_hidden_state(ScannedRNN(lstm_hidden_size), num_envs, rng)
-    if critic_network is None or critic_key is None:
-        raise ValueError(
-            "Critic network and key should be defined if not using                 "
-            " shared network"
-        )
+    rng, actor_key, critic_key = jax.random.split(rng, num=3)
+    init_hstate_actor = init_hidden_state(
+        ScannedRNN(lstm_hidden_size), num_envs, actor_key
+    )
+    init_hstate_critic = init_hidden_state(
+        ScannedRNN(lstm_hidden_size), num_envs, critic_key
+    )
     actor_params = actor_network.init(actor_key, init_hstate_actor, init_x)
     critic_params = critic_network.init(critic_key, init_hstate_critic, init_x)
     actor = TrainState.create(
@@ -176,15 +163,23 @@ def predict_probs_and_value(
     return pi.probs, val
 
 
-def predict_value(
-    critic_state: TrainState, critic_params: FrozenDict, obs: ndarray
+def predict_value_and_hidden(
+    critic_state: TrainState,
+    critic_params: FrozenDict,
+    hidden: HiddenState,
+    obs: ndarray,
+    done: ndarray,
 ) -> Array:
     """Return the predicted value of the given obs with the current critic state"""
-    return critic_state.apply_fn(critic_params, obs)  # type: ignore[attr-defined]
+    return critic_state.apply_fn(critic_params, hidden, (obs, done))  # type: ignore[attr-defined]
 
 
 def predict_probs(
-    actor_state: TrainState, actor_params: FrozenDict, obs: ndarray
+    actor_state: TrainState,
+    actor_params: FrozenDict,
+    hidden: HiddenState,
+    obs: ndarray,
+    done: ndarray,
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
-    return actor_state.apply_fn(actor_params, obs).probs  # type: ignore[attr-defined]
+    return actor_state.apply_fn(actor_params, hidden, (obs, done))[1].probs  # type: ignore[attr-defined]

@@ -1,6 +1,6 @@
 """Pure jax PPO training"""
 from functools import partial
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, Optional
 
 import gymnax
 import jax
@@ -8,94 +8,20 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
-from gymnax.environments.environment import Environment, EnvParams, EnvState
+from gymnax.environments.environment import Environment, EnvParams
 from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
-from jaxppo.networks.networks_lstm import (
-    NetworkLSTM,
+from jaxppo.networks.networks_RNN import (
+    NetworkRNN,
     get_adam_tx,
     init_actor_and_critic_state,
     init_networks,
 )
+from jaxppo.types_rnn import BatchInfo, RunnerState, Transition, UpdateState
 from jaxppo.utils import annealed_linear_schedule, get_parameterized_schedule
 from jaxppo.wandb_logging import wandb_log
 from jaxppo.wrappers import FlattenObservationWrapper, LogWrapper
-
-
-class Transition(NamedTuple):
-    """The current rollout-buffer (storing transition from the environment rollouts)"""
-
-    done: jnp.ndarray
-    action: jnp.ndarray
-    value: jnp.ndarray
-    reward: jnp.ndarray
-    log_prob: jnp.ndarray
-    obs: jnp.ndarray
-    info: jnp.ndarray
-
-
-# class RunnerState(NamedTuple):
-#     """The current agent state used to step the env"""
-
-#     actor_state: jnp.ndarray
-#     critic_state: Optional[jnp.ndarray]
-#     env_state: jnp.ndarray
-#     last_obs: jnp.ndarray
-#     last_done: jnp.ndarray
-#     actor_hstate: jnp.ndarray
-#     critic_hstate: jnp.ndarray
-#     rng: random.PRNGKeyArray
-
-RunnerState = tuple[
-    jnp.ndarray,
-    Optional[jnp.ndarray],
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    random.PRNGKeyArray,
-]
-
-
-# class UpdateState(NamedTuple):
-#     """The current state of the updated parameters and the required variables\
-#           for the update"""
-
-#     actor_state: jnp.ndarray
-#     critic_state: Optional[jnp.ndarray]
-#     traj_batch: Transition
-#     advantages: jnp.ndarray
-#     targets: jnp.ndarray
-#     rng: random.PRNGKeyArray
-#     actor_hstate: jnp.ndarray
-#     critic_hstate: jnp.ndarray
-
-
-UpdateState = tuple[
-    jnp.ndarray,
-    Optional[jnp.ndarray],
-    Transition,
-    jnp.ndarray,
-    jnp.ndarray,
-    random.PRNGKeyArray,
-    jnp.ndarray,
-    jnp.ndarray,
-]
-
-
-# class BatchInfo(NamedTuple):
-#     traj_batch: Transition
-#     advantages: jnp.ndarray
-#     targets: jnp.ndarray
-#     actor_hstate: Optional[jnp.ndarray] = None
-#     critic_hstate: Optional[jnp.ndarray] = None
-
-
-BatchInfo = tuple[
-    Transition, jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]
-]
 
 
 def _env_step_pre_partial(
@@ -104,11 +30,9 @@ def _env_step_pre_partial(
     env: Environment,
     env_params: EnvParams,
     num_envs: int,
-) -> tuple[
-    tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray], Transition
-]:
-    "TODO : redo whole doc"
+) -> tuple[RunnerState, Transition]:
     """
+    TODO : redo whole doc"
     Step the environment (over num_envs envs) and collect the transitions the buffer\
           according to the current actor, critic and env states. Then updates env state
 
@@ -184,7 +108,7 @@ def _env_step_pre_partial(
         critic_hstate,
         rng,
     )
-    return runner_state, (transition, (actor_hstate, critic_hstate))
+    return runner_state, transition
 
 
 def _calculate_gae(
@@ -210,8 +134,9 @@ def _calculate_gae(
     """
 
     def _get_advantages(
-        gae_and_next_value: tuple[jax.Array, jax.Array], transition: Transition
-    ) -> tuple[tuple[jax.Array, jax.Array], jax.Array]:
+        gae_and_next_value: tuple[jax.Array, jax.Array, jax.Array],
+        transition: Transition,
+    ) -> tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array,]:
         """
         Iteratively compute advantages in gae style using previous gae, next value\
               and transition buffer
@@ -253,7 +178,7 @@ def _calculate_gae(
 def _actor_loss_fn_pre_partial(
     actor_params: FrozenDict,
     batch_info: BatchInfo,
-    actor_network: NetworkLSTM,
+    actor_network: NetworkRNN,
     ent_coef: float,
     clip_coef: float,
     advantage_normalization: bool,
@@ -276,12 +201,11 @@ def _actor_loss_fn_pre_partial(
               the sub-losses for logging
     """
     # RERUN NETWORK
-    traj_batch, advantages, targets, actor_hstate, critic_hstate = batch_info
+    traj_batch, advantages, _, actor_hstate, _ = batch_info
     # actor_hstate_0 = {k: (v[0][0], v[1][0]) for k, v in batch_info.actor_hstate.items()} TODO : elucidate this
-
     _, pi = actor_network.apply(
         actor_params,
-        actor_hstate,
+        actor_hstate[0],
         (traj_batch.obs, traj_batch.done),
     )
     log_prob = pi.log_prob(traj_batch.action)
@@ -314,7 +238,7 @@ def _actor_loss_fn_pre_partial(
 def _critic_loss_fn_pre_partial(
     critic_params: FrozenDict,
     batch_info: BatchInfo,
-    critic_network: NetworkLSTM,
+    critic_network: NetworkRNN,
     clip_coef_vf: Optional[float],
 ) -> jax.Array:
     """
@@ -330,11 +254,11 @@ def _critic_loss_fn_pre_partial(
     Returns:
         jax.Array: The critic/value loss.
     """
-    traj_batch, advantages, targets, actor_hstate, critic_hstate = batch_info
+    traj_batch, _, targets, _, critic_hstate = batch_info
     # RERUN NETWORK
     _, value = critic_network.apply(
         critic_params,
-        critic_hstate,
+        critic_hstate[0],
         (traj_batch.obs, traj_batch.done),
     )
     value_losses = (value - targets) ** 2
@@ -360,12 +284,11 @@ def _critic_loss_fn_pre_partial(
 def _update_minibatch_pre_partial(  # pylint: disable=R0914
     train_state: tuple[TrainState, TrainState],
     batch_info: BatchInfo,
-    actor_network: NetworkLSTM,
+    actor_network: NetworkRNN,
     ent_coef: float,
     clip_coef: float,
     clip_coef_vf: Optional[float],
-    critic_network: NetworkLSTM,
-    vf_coef: float,
+    critic_network: NetworkRNN,
     advantage_normalization: bool,
 ) -> tuple[tuple[TrainState, TrainState], tuple[jax.Array, ...],]:
     """
@@ -386,7 +309,7 @@ def _update_minibatch_pre_partial(  # pylint: disable=R0914
         tuple[jax.Array, jax.Array, jax.Array, jax.Array] ]:\
               The updated actor and critic states, and the losses values for logging.
     """
-    traj_batch, advantages, targets, actor_hstate, critic_hstate = batch_info
+    _, advantages, _, _, _ = batch_info
 
     actor_state, critic_state = train_state
     _actor_loss_fn = partial(
@@ -432,14 +355,13 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
     _: Any,
     minibatch_size: int,
     num_minibatches: int,
-    actor_network: NetworkLSTM,
+    actor_network: NetworkRNN,
     ent_coef: float,
     clip_coef: float,
     clip_coef_vf: Optional[float],
-    critic_network: NetworkLSTM,
+    critic_network: NetworkRNN,
     num_steps: int,
     num_envs: int,
-    vf_coef: float,
     advantage_normalization: bool,
 ) -> tuple[UpdateState, tuple[jax.Array, jax.Array, jax.Array, jax.Array],]:
     """
@@ -483,69 +405,29 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
     assert (
         batch_size == num_steps * num_envs
     ), "batch size must be equal to number of steps * number of envs"
-    permutation = jax.random.permutation(permutation_key, batch_size)
-    initial_actor_hstate = actor_hstate[0][0]
-    initial_critic_hstate = critic_hstate[0][0]
+    permutation = jax.random.permutation(permutation_key, num_envs)
     batch = (
-        actor_hstate,
-        critic_hstate,
         traj_batch,
         advantages,
         targets,
+        actor_hstate,
+        critic_hstate,
     )
-
     shuffled_batch = jax.tree_util.tree_map(
-        lambda x: (
-            jnp.take(x, permutation)[:, np.newaxis]
-            if len(x.shape) == 2
-            else jnp.take(x.reshape((batch_size, x.shape[-1])), permutation, axis=0)
+        lambda x: jnp.take(x, permutation, axis=1), batch
+    )
+    minibatches = jax.tree_util.tree_map(
+        lambda x: jnp.swapaxes(
+            jnp.reshape(
+                x,
+                [x.shape[0], num_minibatches, -1] + list(x.shape[2:]),
+            ),
+            1,
+            0,
         ),
-        batch,
+        shuffled_batch,
     )
 
-    # minibatches = jax.tree_util.tree_map(
-    #     lambda x: jnp.swapaxes(
-    #         jnp.reshape(
-    #             x,
-    #             [1, num_minibatches, -1] + list(x.shape[2:]),
-    #         ),
-    #         1,
-    #         0,
-    #     ),
-    #     shuffled_batch,
-    # )
-
-    shuffled_traj_batch = jax.tree_util.tree_map(
-        lambda x: x.reshape(
-            [1, num_minibatches, -1]
-            if x.shape[-1] == 1
-            else [1, num_minibatches, -1, x.shape[-1]]
-        ).swapaxes(0, 1),
-        shuffled_batch[2],
-    )
-
-    new_minibatches = (
-        shuffled_traj_batch,
-        shuffled_batch[3].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
-        shuffled_batch[4].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
-        shuffled_batch[0]
-        .reshape([1, num_minibatches, -1, actor_hstate.shape[-1]])
-        .swapaxes(0, 1),
-        shuffled_batch[1]
-        .reshape([1, num_minibatches, -1, critic_hstate.shape[-1]])
-        .swapaxes(0, 1),
-    )
-    # new_minibatches = (
-    #     shuffled_traj_batch,
-    #     shuffled_batch[3].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
-    #     shuffled_batch[4].reshape([1, num_minibatches, -1]).swapaxes(0, 1),
-    #     initial_actor_hstate.reshape([1, -1, initial_actor_hstate.shape[-1]]).repeat(
-    #         num_minibatches, axis=0
-    #     ),
-    #     initial_critic_hstate.reshape([1, -1, initial_actor_hstate.shape[-1]]).repeat(
-    #         num_minibatches, axis=0
-    #     ),
-    # )
     _update_minibatch = partial(
         _update_minibatch_pre_partial,
         actor_network=actor_network,
@@ -553,13 +435,12 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
         clip_coef=clip_coef,
         clip_coef_vf=clip_coef_vf,
         critic_network=critic_network,
-        vf_coef=vf_coef,
         advantage_normalization=advantage_normalization,
     )
     (actor_state, critic_state), metrics = jax.lax.scan(
         f=_update_minibatch,
         init=(actor_state, critic_state),
-        xs=new_minibatches,
+        xs=minibatches,
     )
     update_state = (
         actor_state,
@@ -577,8 +458,8 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
 def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     runner_state: RunnerState,
     _: Any,
-    actor_network: NetworkLSTM,
-    critic_network: NetworkLSTM,
+    actor_network: NetworkRNN,
+    critic_network: NetworkRNN,
     env: Environment,
     env_params: EnvParams,
     gamma: float,
@@ -592,11 +473,8 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     num_envs: int,
     num_steps: int,
     log: bool,
-    vf_coef: Optional[float],
     advantage_normalization: bool,
-) -> tuple[
-    tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray], dict
-]:
+) -> tuple[RunnerState, dict]:
     """
     Update the agent (actor and critic network states) on the provided environment(s)\
           for the given number of epochs, num of minibatches and minibatch size.
@@ -639,7 +517,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     initial_actor_hstate = runner_state[-3]
     initial_critic_hstate = runner_state[-2]
     # COLLECT BATCH TRAJECTORIES
-    runner_state, (traj_batch, (actor_hstate, critic_hstate)) = jax.lax.scan(
+    runner_state, traj_batch = jax.lax.scan(
         f=_env_step, init=runner_state, xs=None, length=num_steps
     )
     (
@@ -676,13 +554,12 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         critic_network=critic_network,
         num_steps=num_steps,
         num_envs=num_envs,
-        vf_coef=vf_coef,
         advantage_normalization=advantage_normalization,
     )
-    # initial_actor_hstate, initial_critic_hstate = (
-    #     initial_actor_hstate[None, :],
-    #     initial_critic_hstate[None, :],
-    # )
+    initial_actor_hstate, initial_critic_hstate = (
+        initial_actor_hstate[None, :],
+        initial_critic_hstate[None, :],
+    )
     update_state = (
         actor_state,
         critic_state,
@@ -690,8 +567,8 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         advantages,
         targets,
         rng,
-        actor_hstate,
-        critic_hstate,
+        initial_actor_hstate,
+        initial_critic_hstate,
     )
     update_state, metrics = jax.lax.scan(
         f=_update_epoch,
@@ -719,7 +596,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         env_state,
         last_obs,
         last_done,
-        final_actor_hstate,  # TODO : switch to the last hidden state?
+        final_actor_hstate,
         final_critic_hstate,
         rng,
     )
@@ -745,12 +622,9 @@ def make_train(  # pylint: disable=W0102, R0913
     env_params: Optional[EnvParams] = None,
     anneal_lr: bool = True,
     max_grad_norm: Optional[float] = 0.5,
-    vf_coef: Optional[float] = None,
     advantage_normalization: bool = True,
     lstm_hidden_size: int = 8,
-) -> Callable[
-    ..., tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray]
-]:
+) -> Callable[[random.PRNGKeyArray], RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
 
@@ -791,11 +665,11 @@ def make_train(  # pylint: disable=W0102, R0913
 
     def train(
         key: random.PRNGKeyArray,
-    ) -> tuple[TrainState, TrainState, EnvState, jax.Array, random.PRNGKeyArray]:
+    ) -> RunnerState:
         """Train the agent with the given random key and according to config"""
         # INIT NETWORK
 
-        (rng, actor_key, critic_key, hidden_init_key) = random.split(key, num=4)
+        (rng, hidden_init_key) = random.split(key)
         actor_network, critic_network = init_networks(
             env=env,
             actor_architecture=actor_architecture,
@@ -820,8 +694,6 @@ def make_train(  # pylint: disable=W0102, R0913
                 critic_network=critic_network,
                 rng=hidden_init_key,
                 num_envs=num_envs,
-                actor_key=actor_key,
-                critic_key=critic_key,
                 env=env,
                 actor_tx=get_adam_tx(
                     learning_rate=scheduler, max_grad_norm=max_grad_norm
@@ -868,7 +740,6 @@ def make_train(  # pylint: disable=W0102, R0913
             num_envs=num_envs,
             num_steps=num_steps,
             log=log,
-            vf_coef=vf_coef,
             advantage_normalization=advantage_normalization,
         )
         runner_state, _ = jax.lax.scan(

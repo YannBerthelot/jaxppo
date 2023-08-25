@@ -9,10 +9,12 @@ from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
 from jaxppo.config import PPOConfig
-from jaxppo.networks.networks import predict_probs as network_predict_probs
-from jaxppo.networks.networks import predict_probs_and_value
-from jaxppo.networks.networks import predict_value as network_predict_value
-from jaxppo.train_lstm import make_train
+from jaxppo.networks.networks_RNN import ScannedRNN, init_hidden_state
+from jaxppo.networks.networks_RNN import predict_probs as network_predict_probs
+from jaxppo.networks.networks_RNN import (
+    predict_value_and_hidden as network_predict_value_and_hidden,
+)
+from jaxppo.train_rnn import make_train
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
 
 
@@ -38,10 +40,9 @@ class PPO:
         logging_config: Optional[LoggingConfig] = None,
         env_params: Optional[EnvParams] = None,
         anneal_lr: bool = True,
-        vf_coef: Optional[float] = None,
         max_grad_norm: float = 0.5,
         advantage_normalization: bool = True,
-        lstm_hidden_size: int = 64,
+        lstm_hidden_size: int = 8,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -89,7 +90,6 @@ class PPO:
             logging_config=logging_config,
             env_params=env_params,
             anneal_lr=anneal_lr,
-            vf_coef=vf_coef,
             max_grad_norm=max_grad_norm,
             advantage_normalization=advantage_normalization,
             lstm_hidden_size=lstm_hidden_size,
@@ -97,6 +97,8 @@ class PPO:
 
         self._actor_state = None
         self._critic_state = None
+        self._actor_hidden_state = None
+        self._critic_hidden_state = None
         self.actor_network = None
         self.critic_network = None
 
@@ -140,7 +142,6 @@ class PPO:
             env_params=self.config.env_params,
             anneal_lr=self.config.anneal_lr,
             max_grad_norm=self.config.max_grad_norm,
-            vf_coef=self.config.vf_coef,
             advantage_normalization=self.config.advantage_normalization,
             lstm_hidden_size=self.config.lstm_hidden_size,
         )
@@ -149,6 +150,10 @@ class PPO:
         self._actor_state, self._critic_state = (
             runner_state[0],
             runner_state[1],
+        )
+        self._actor_hidden_state, self._critic_hidden_state = (
+            runner_state[-3],
+            runner_state[-2],
         )
         if test:
             self.test(self.config.num_episode_test, seed=seed)
@@ -160,18 +165,40 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-        return network_predict_probs(self._actor_state, self._actor_state.params, obs)
+        return network_predict_probs(
+            self._actor_state,
+            self._actor_state.params,
+            self._actor_hidden_state[0][jnp.newaxis, :],
+            obs[jnp.newaxis, :],
+            done=jnp.array([[True]]),
+        )[0][0]
 
-    def predict_value(self, obs: jax.Array) -> jax.Array:
+    def predict_value_and_hidden(
+        self, obs: jax.Array, done: bool = True, hidden: Optional[jax.Array] = None
+    ) -> jax.Array:
         """Predict the value of obs according to critic"""
         if self._critic_state is None:
             raise ValueError(
                 "Attempted to predict value without a critic state/training the agent"
                 " first"
             )
-        return network_predict_value(self._critic_state, self._critic_state.params, obs)
+        if hidden is None:
+            hidden = self._critic_hidden_state[0][jnp.newaxis, :]
+        return network_predict_value_and_hidden(
+            self._critic_state,
+            self._critic_state.params,
+            hidden,
+            obs[jnp.newaxis, :],
+            done=jnp.array([[done]]),
+        )
 
-    def get_action(self, obs: jax.Array, key: random.PRNGKeyArray) -> jax.Array:
+    def get_action(
+        self,
+        obs: jax.Array,
+        key: random.PRNGKeyArray,
+        done: bool = True,
+        hidden: Optional[jax.Array] = None,
+    ) -> jax.Array:
         """Returns a numpy action compliant with gym using the current \
             state of the agent"""
         if self._actor_state is None:
@@ -179,18 +206,18 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-
-        pi = self._actor_state.apply_fn(self._actor_state.params, obs)
-        return pi.sample(seed=key)
+        new_hidden, pi = self._actor_state.apply_fn(
+            self._actor_state.params,
+            hidden,
+            (obs, done),
+        )
+        return new_hidden, pi.sample(seed=key)
 
     def test(self, n_episodes: int, seed: int):
         """Evaluate the agent over n_episodes (using seed for rng) and log the episodic\
               returns"""
         key = random.PRNGKey(seed)
-        (
-            key,
-            action_key,
-        ) = random.split(key, num=2)
+        (key, action_key, hidden_init_key) = random.split(key, num=3)
         if isinstance(self.config.env_id, str):
             env, env_params = gymnax.make(self.config.env_id)
         else:
@@ -203,16 +230,32 @@ class PPO:
         obs, state = vmap_reset(vmap_keys, env_params)
         done = jnp.zeros(n_episodes, dtype=jnp.int8)
         rewards = jnp.zeros(n_episodes)
-        step = 0
-        while not done.all():
+        hidden = init_hidden_state(
+            ScannedRNN(self.config.lstm_hidden_size),
+            num_envs=n_episodes,
+            rng=hidden_init_key,
+        )
+        carry = (rewards, action_key, obs, done, hidden, state)
+
+        def step_env(carry):
+            (rewards, action_key, obs, done, hidden, state) = carry
             action_key, rng = jax.random.split(action_key)
-            actions = self.get_action(obs, rng)
-            obs, state, reward, new_done, _ = vmap_step(
-                vmap_keys, state, actions, env_params
+            hidden, actions = self.get_action(
+                obs[jnp.newaxis, :], rng, done=done[jnp.newaxis, :], hidden=hidden
             )
-            step += 1
+            obs, state, reward, new_done, _ = vmap_step(
+                vmap_keys, state, actions.squeeze(0), env_params
+            )
             done = done | jnp.int8(new_done)
             rewards = rewards + (reward * (1 - done))
+            return (rewards, action_key, obs, done, hidden, state)
+
+        def not_all_env_done(carry):
+            done = carry[3]
+            return jnp.logical_not(done.all())
+
+        rewards = jax.lax.while_loop(not_all_env_done, step_env, carry)[0]
+
         if self.config.logging_config is not None:
             wandb_test_log(rewards)
 
@@ -221,7 +264,7 @@ if __name__ == "__main__":
     import wandb
 
     num_envs = 4
-    num_steps = 128
+    num_steps = 8
     env_id = "CartPole-v1"
     logging_config = LoggingConfig("Jax PPO LSTM", "test", config={})
     init_logging(logging_config=logging_config)
@@ -230,9 +273,8 @@ if __name__ == "__main__":
         env_id=env_id,
         learning_rate=2.5e-4,
         num_steps=num_steps,
-        # num_minibatches=num_steps * num_envs // sb3_batch_size,
-        num_minibatches=4,
-        update_epochs=4,
+        num_minibatches=4,  # can't change atm.
+        update_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
         clip_coef=0.2,
@@ -245,8 +287,7 @@ if __name__ == "__main__":
         clip_coef_vf=None,
         anneal_lr=False,
         max_grad_norm=0.5,
-        vf_coef=0.5,
-        lstm_hidden_size=8,
+        lstm_hidden_size=4,
     )
     agent.train(seed=1, test=False)
     wandb.finish()
