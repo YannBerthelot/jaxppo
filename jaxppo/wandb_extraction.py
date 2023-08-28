@@ -14,11 +14,11 @@ WandbRun = Any
 os.environ["WANDB_ENTITY"] = "yann-berthelot"
 
 
-def get_last_run(user_name: str, project_name: str):
-    """Extracts the last run of the user/project from the W&B API"""
+def get_run(run_number: int, user_name: str, project_name: str):
+    """Extracts the i-th run of the user/project from the W&B API, 0 being last."""
     api = wandb.Api()
     runs = api.runs(f"{user_name}/{project_name}")
-    return runs[0]  # last run
+    return runs[run_number]
 
 
 def split_run(run: WandbRun, num_splits: int) -> tuple[list, dict, str]:
@@ -98,6 +98,7 @@ def upload_runs(project_name: str, run_name: str, runs: list, config: dict) -> N
 
 
 def split_runs_and_upload_them(
+    runs: list[int],
     user_name: str,
     project_name_in: str,
     num_split: int,
@@ -117,19 +118,22 @@ def split_runs_and_upload_them(
         project_name_out (Optional[str], optional): _description_. Defaults to None.
     """
     print("Splitting run")
-    run = get_last_run(
-        user_name, project_name_in
-    )  # TODO :Be able to work with other runs? by name ?
-    runs, config, name = split_run(run, num_split)
-    if project_name_out is None:
-        project_name_out = project_name_in
-    print("Runs split. Uploading runs.")
-    upload_runs(project_name_out, name, runs, config)
-    print("Uploading done.")
+    for run_number in tqdm(runs):
+        run = get_run(
+            run_number, user_name, project_name_in
+        )  # TODO :Be able to work with other runs? by name ?
+        runs, config, name = split_run(run, num_split)
+        if project_name_out is None:
+            project_name_out = project_name_in
+        print("Runs split. Uploading runs.")
+        upload_runs(project_name_out, name, runs, config)
+        print("Uploading done.")
 
 
 if __name__ == "__main__":
+    runs = [0, 1, 2, 3]
     split_runs_and_upload_them(
+        runs,
         os.environ["WANDB_ENTITY"],
         project_name_in="Benchmark delay merged",
         project_name_out="Benchmark delay merged out",

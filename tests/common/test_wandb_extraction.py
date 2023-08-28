@@ -71,7 +71,7 @@ def test_split_run():
         run = get_fake_run(run_id)
         runs, config, name = split_run(run, num_splits=2)
     finally:
-        destroy_fake_run(id)
+        destroy_fake_run(run_id)
     (run_1, run_2) = runs
     for key in ["value", "other_val"]:
         assert [val[key] for val in run_1] == [1 for _ in range(10)]
