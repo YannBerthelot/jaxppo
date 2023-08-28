@@ -164,3 +164,4 @@ cython_debug/
 *.txt
 
 wandb/*
+jaxppo/wandb/*

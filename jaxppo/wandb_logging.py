@@ -22,6 +22,7 @@ class LoggingConfig:
 
 def init_logging(logging_config: LoggingConfig):
     """Init the wandb run with the logging config"""
+
     wandb.init(
         project=logging_config.project_name,
         name=logging_config.run_name,

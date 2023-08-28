@@ -257,5 +257,11 @@ if __name__ == "__main__":
         max_grad_norm=0.5,
         vf_coef=0.5,
     )
-    agent.train(seed=1, test=False)
-    wandb.finish()
+
+    def training_loop(seed):
+        """Train the agent in a functional fashion for jax"""
+        agent.train(seed, test=False)
+        wandb.finish()
+
+    seeds = jnp.array(range(5))
+    jax.vmap(training_loop, in_axes=(None, 0))(seeds)

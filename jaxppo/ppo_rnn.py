@@ -266,14 +266,14 @@ if __name__ == "__main__":
     num_envs = 4
     num_steps = 8
     env_id = "CartPole-v1"
-    logging_config = LoggingConfig("Jax PPO LSTM", "test", config={})
-    init_logging(logging_config=logging_config)
+    logging_config = LoggingConfig("Test multithreading", "test", config={})
+
     sb3_batch_size = 128
     agent = PPO(
         env_id=env_id,
         learning_rate=2.5e-4,
         num_steps=num_steps,
-        num_minibatches=4,  # can't change atm.
+        num_minibatches=num_envs,  # must be equal to num_envs atm
         update_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
@@ -289,5 +289,11 @@ if __name__ == "__main__":
         max_grad_norm=0.5,
         lstm_hidden_size=4,
     )
-    agent.train(seed=1, test=False)
-    wandb.finish()
+
+    def training_loop(seed):
+        """Train the agent in a functional fashion for jax"""
+        agent.train(seed, test=False)
+        wandb.finish()
+
+    seeds = jnp.array(range(5))
+    jax.vmap(training_loop, in_axes=(None, 0))(seeds)
