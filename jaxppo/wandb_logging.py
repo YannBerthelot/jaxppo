@@ -1,9 +1,11 @@
 """Helpers for weights&biases logging"""
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
+
 import wandb
 
 os.environ["WANDB_SILENT"] = "false"
@@ -18,6 +20,7 @@ class LoggingConfig:
     run_name: str
     config: dict
     mode: str = "online"
+    group_name: Optional[str] = None
 
 
 def init_logging(logging_config: LoggingConfig):
@@ -25,6 +28,7 @@ def init_logging(logging_config: LoggingConfig):
 
     wandb.init(
         project=logging_config.project_name,
+        group=logging_config.group_name,
         name=logging_config.run_name,
         save_code=False,
         monitor_gym=False,
