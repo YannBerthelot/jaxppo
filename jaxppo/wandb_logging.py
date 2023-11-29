@@ -1,7 +1,7 @@
 """Helpers for weights&biases logging"""
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
@@ -72,7 +72,14 @@ def wandb_log(info, metrics, num_envs, shared_network=False):
     jax.debug.callback(log_variables, losses_dict)
 
 
-def log_variables(variables_to_log: dict, commit: bool = False):
+def log_model(model_path: Any, name: str):
+    """Log the model weights to wandb"""
+    artifact = wandb.Artifact(name=name, type="model")
+    artifact.add_dir(local_path=model_path)  # Add dataset directory to artifact
+    wandb.log_artifact(artifact)  # Logs the artifact version "my_data:v0"
+
+
+def log_variables(variables_to_log: dict, commit: bool = True):
     """Log variables (in form of a dict of names and values) into wandb.
     Commit to finish a step."""
     wandb.log(variables_to_log, commit=commit)

@@ -12,7 +12,7 @@ from jaxppo.config import PPOConfig
 from jaxppo.networks.networks import predict_probs as network_predict_probs
 from jaxppo.networks.networks import predict_probs_and_value
 from jaxppo.networks.networks import predict_value as network_predict_value
-from jaxppo.train import make_train
+from jaxppo.train import init_agent, load_model, make_train
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
 
 
@@ -42,6 +42,8 @@ class PPO:
         vf_coef: Optional[float] = None,
         max_grad_norm: float = 0.5,
         advantage_normalization: bool = True,
+        save: bool = False,
+        save_folder: str = "./models",
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -93,12 +95,41 @@ class PPO:
             vf_coef=vf_coef,
             max_grad_norm=max_grad_norm,
             advantage_normalization=advantage_normalization,
+            save=save,
+            save_folder=save_folder,
+        )
+        key = random.PRNGKey(0)
+        num_updates = total_timesteps // num_steps // num_envs
+        if isinstance(env_id, str):
+            env_id, env_params = gymnax.make(env_id)
+        env = env_id
+        (
+            self.actor_network,
+            self.critic_network,
+            self._actor_state,
+            self._critic_state,
+            self.rng,
+        ) = init_agent(
+            key,
+            env,
+            actor_architecture,
+            critic_architecture,
+            shared_network,
+            num_envs,
+            anneal_lr,
+            learning_rate,
+            num_minibatches,
+            update_epochs,
+            num_updates,
+            max_grad_norm,
+            env_params,
         )
 
-        self._actor_state = None
-        self._critic_state = None
-        self.actor_network = None
-        self.critic_network = None
+    def load(self, path: str):
+        """Load the actor and critic state from the save file in path"""
+        self._actor_state, self._critic_state = load_model(
+            path, self._actor_state, self._critic_state
+        )
 
     def train(self, seed: int, test: bool = False):
         """
@@ -143,6 +174,8 @@ class PPO:
             shared_network=self.config.shared_network,
             vf_coef=self.config.vf_coef,
             advantage_normalization=self.config.advantage_normalization,
+            save=self.config.save,
+            save_folder=self.config.save_folder,
         )
 
         runner_state = train_jit(key)
@@ -256,6 +289,7 @@ if __name__ == "__main__":
         shared_network=False,
         max_grad_norm=0.5,
         vf_coef=0.5,
+        save=True,
     )
 
     def training_loop(seed):
@@ -263,5 +297,6 @@ if __name__ == "__main__":
         agent.train(seed, test=False)
         wandb.finish()
 
-    seeds = jnp.array(range(5))
-    jax.vmap(training_loop, in_axes=(None, 0))(seeds)
+    training_loop(42)
+    # seeds = jnp.array(range(2))
+    # jax.vmap(training_loop, in_axes=(None, 0))(seeds)

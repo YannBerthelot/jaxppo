@@ -1,4 +1,6 @@
 """Pure jax PPO training"""
+import os
+import pickle
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
@@ -6,6 +8,7 @@ import gymnax
 import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
+from flax.serialization import from_state_dict, to_state_dict
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams, EnvState
 from gymnax.wrappers.purerl import GymnaxWrapper
@@ -18,8 +21,35 @@ from jaxppo.networks.networks import (
     init_networks,
 )
 from jaxppo.utils import annealed_linear_schedule, get_parameterized_schedule
-from jaxppo.wandb_logging import wandb_log
-from jaxppo.wrappers import FlattenObservationWrapper, LogWrapper
+from jaxppo.wandb_logging import log_model, log_variables
+
+
+def save_model(
+    actor: TrainState,
+    critic: TrainState,
+    idx: int,
+    log: bool = True,
+    save_folder: str = "./models",
+):
+    """Save the actor and critic state to the specified folder. Log the model to wandb if selected."""
+    os.makedirs(save_folder, exist_ok=True)
+    path = os.path.join(save_folder, f"update_{idx}.pkl")
+    dict_to_save = {"actor": to_state_dict(actor), "critic": to_state_dict(critic)}
+    with open(path, "wb") as handle:
+        pickle.dump(dict_to_save, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    if log:
+        log_model(path, "actor_critic_model")
+
+
+def load_model(
+    path: str, actor: TrainState, critic: TrainState
+) -> tuple[TrainState, TrainState]:
+    """Load actor and critic state from the save file in path"""
+    with open(path, "rb") as handle:
+        actor_and_critic = pickle.load(handle)
+    return from_state_dict(actor, actor_and_critic["actor"]), from_state_dict(
+        critic, actor_and_critic["critic"]
+    )
 
 
 class Transition(NamedTuple):
@@ -45,6 +75,8 @@ class RunnerState(NamedTuple):
     last_done: Optional[jnp.ndarray] = None
     actor_hstate: Optional[jnp.ndarray] = None
     critic_hstate: Optional[jnp.ndarray] = None
+    num_update: int = 0
+    timestep: int = 0
 
 
 class UpdateState(NamedTuple):
@@ -538,6 +570,59 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
     return update_state, metrics
 
 
+def init_agent(  # pylint: disable=W0102, R0913
+    key: jax.random.PRNGKeyArray,
+    env: Environment,
+    actor_architecture: list[str],
+    critic_architecture: list[str],
+    shared_network: bool,
+    num_envs: int,
+    anneal_lr: float,
+    learning_rate: float,
+    num_minibatches: int,
+    update_epochs: int,
+    num_updates: int,
+    max_grad_norm: Optional[float],
+    env_params: EnvParams,
+):
+    """Initialize the networks, actor/critic states, and rng"""
+    (
+        rng,
+        actor_key,
+        critic_key,
+    ) = random.split(key, num=3)
+    actor_network, critic_network = init_networks(
+        env=env,
+        actor_architecture=actor_architecture,
+        critic_architecture=critic_architecture,
+        shared_network=shared_network,
+        multiple_envs=num_envs > 1,
+    )
+    if anneal_lr:
+        scheduler = get_parameterized_schedule(
+            linear_scheduler=annealed_linear_schedule,
+            initial_learning_rate=learning_rate,
+            num_minibatches=num_minibatches,
+            update_epochs=update_epochs,
+            num_updates=num_updates,
+        )
+    else:
+        scheduler = learning_rate  # type: ignore[assignment]
+
+    actor_state, critic_state = init_actor_and_critic_state(
+        actor_network=actor_network,
+        critic_network=critic_network,
+        actor_key=actor_key,
+        critic_key=critic_key,
+        env=env,
+        actor_tx=get_adam_tx(learning_rate=scheduler, max_grad_norm=max_grad_norm),
+        critic_tx=get_adam_tx(learning_rate=scheduler, max_grad_norm=max_grad_norm),
+        env_params=env_params,
+        shared_network=shared_network,
+    )
+    return actor_network, critic_network, actor_state, critic_state, rng
+
+
 def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     runner_state: RunnerState,
     _: Any,
@@ -559,6 +644,10 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     shared_network: bool,
     vf_coef: Optional[float],
     advantage_normalization: bool,
+    save: bool,
+    save_folder: str,
+    num_eval_envs: int,
+    num_updates: int,
 ) -> tuple[RunnerState, dict]:
     """
     Update the agent (actor and critic network states) on the provided environment(s)\
@@ -583,6 +672,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         clip_coef (float): PPO's clipping coefficient.
         update_epochs (int): The number of training epochs over the same experience.
         num_envs (int): The number of environments to train on in parallel.
+        save (bool): Wether or not to save model
 
     Returns:
        tuple[
@@ -600,6 +690,8 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         num_envs=num_envs,
         shared_network=shared_network,
     )
+    timestep = runner_state.timestep
+    num_update = runner_state.num_update
     # COLLECT BATCH TRAJECTORIES
 
     runner_state, traj_batch = jax.lax.scan(
@@ -646,25 +738,102 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         targets=targets,
         rng=runner_state.rng,
     )
-    update_state, metrics = jax.lax.scan(
+    update_state, _ = jax.lax.scan(
         f=_update_epoch,
         init=update_state,
         xs=None,
         length=update_epochs,
     )
 
-    if log:
-        jax.debug.callback(
-            wandb_log, update_state.traj_batch.info, metrics, num_envs, shared_network
+    def collect_rollout(rng):
+        episode_done = False
+        reward_collected = 0.0
+        rng, reset_rng = jax.random.split(rng)
+        obsv, env_state = env.reset(reset_rng, env_params)
+        runner_state_eval = (env_state, obsv, rng)
+
+        def step_eval_env(runner_state_and_traj_batch):
+            runner_state_eval, episode_done, reward_collected = (
+                runner_state_and_traj_batch
+            )
+            env_state, last_obs, rng = runner_state_eval
+            # SELECT ACTION
+            if shared_network:
+                pi, _ = update_state.actor_state.apply_fn(
+                    update_state.actor_state.params, last_obs
+                )
+            else:
+                pi = update_state.actor_state.apply_fn(
+                    update_state.actor_state.params, last_obs
+                )
+            rng, action_key = jax.random.split(rng)
+            action = pi.sample(seed=action_key)
+            # STEP ENV
+            rng, step_key = jax.random.split(rng)
+            obsv, env_state, reward, episode_done, _ = env.step(
+                step_key, env_state, action, env_params
+            )
+            runner_state_eval = (env_state, obsv, rng)
+            reward_collected += reward
+            return (runner_state_eval, episode_done, reward_collected)
+
+        def check_done_is_false(runner_state_and_traj_batch):
+            _, done, _ = runner_state_and_traj_batch
+            return jnp.array_equal(done, jnp.zeros_like(done))
+
+        _, _, reward_collected = jax.lax.while_loop(
+            check_done_is_false,
+            step_eval_env,
+            (runner_state_eval, episode_done, reward_collected),
         )
+        return reward_collected
+
+    eval_rewards = jax.vmap(collect_rollout, in_axes=0)(
+        jax.random.split(update_state.rng, num_eval_envs)
+    )
+    timestep += num_envs * num_steps
+    if log:
+        metrics_to_log = {
+            f"episodic reward/reward-{ii}": reward
+            for ii, reward in enumerate(eval_rewards)
+        }
+        metrics_to_log["timestep"] = timestep
+        jax.debug.callback(log_variables, metrics_to_log)
+
+    metric = traj_batch.info
     runner_state = RunnerState(
         actor_state=update_state.actor_state,
         critic_state=update_state.critic_state,
         env_state=runner_state.env_state,
         last_obs=runner_state.last_obs,
         rng=update_state.rng,
+        timestep=timestep,
+        num_update=num_update + 1,
     )
-    return runner_state, update_state.traj_batch.info
+
+    # Save model at the end
+    def check_update_frequency(num_update):
+        cond = jnp.logical_or(num_update == num_updates, num_update % 10 == 0)
+        # jax.debug.print("{num_update}{cond}", num_update=num_update, cond=cond)
+        return cond
+
+    _save_model = partial(save_model, save_folder=save_folder)
+
+    def save_model_cond(actor, critic, index, log):
+        jax.debug.callback(_save_model, actor, critic, index, log)
+
+    if save:
+        jax.lax.cond(
+            check_update_frequency(runner_state.num_update),
+            save_model_cond,
+            lambda actor, critic, index, log: None,
+            update_state.actor_state,
+            update_state.critic_state,
+            runner_state.num_update,
+            log,
+        )
+
+    return runner_state, metric
 
 
 def make_train(  # pylint: disable=W0102, R0913
@@ -689,6 +858,9 @@ def make_train(  # pylint: disable=W0102, R0913
     shared_network: bool = False,
     vf_coef: Optional[float] = None,
     advantage_normalization: bool = True,
+    save: bool = False,
+    save_folder: str = "./models",
+    num_eval_envs: int = 4,
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -726,7 +898,7 @@ def make_train(  # pylint: disable=W0102, R0913
     minibatch_size = num_envs * num_steps // num_minibatches
     if isinstance(env_id, str):
         env_id, env_params = gymnax.make(env_id)
-    env = LogWrapper(FlattenObservationWrapper(env_id))
+    env = env_id
 
     def train(
         key: random.PRNGKeyArray,
@@ -734,39 +906,20 @@ def make_train(  # pylint: disable=W0102, R0913
         """Train the agent with the given random key and according to config"""
         # INIT NETWORK
 
-        (
-            rng,
-            actor_key,
-            critic_key,
-        ) = random.split(key, num=3)
-        actor_network, critic_network = init_networks(
-            env=env,
-            actor_architecture=actor_architecture,
-            critic_architecture=critic_architecture,
-            shared_network=shared_network,
-            multiple_envs=num_envs > 1,
-        )
-        if anneal_lr:
-            scheduler = get_parameterized_schedule(
-                linear_scheduler=annealed_linear_schedule,
-                initial_learning_rate=learning_rate,
-                num_minibatches=num_minibatches,
-                update_epochs=update_epochs,
-                num_updates=num_updates,
-            )
-        else:
-            scheduler = learning_rate  # type: ignore[assignment]
-
-        actor_state, critic_state = init_actor_and_critic_state(
-            actor_network=actor_network,
-            critic_network=critic_network,
-            actor_key=actor_key,
-            critic_key=critic_key,
-            env=env,
-            actor_tx=get_adam_tx(learning_rate=scheduler, max_grad_norm=max_grad_norm),
-            critic_tx=get_adam_tx(learning_rate=scheduler, max_grad_norm=max_grad_norm),
-            env_params=env_params,
-            shared_network=shared_network,
+        actor_network, critic_network, actor_state, critic_state, rng = init_agent(
+            key,
+            env,
+            actor_architecture,
+            critic_architecture,
+            shared_network,
+            num_envs,
+            anneal_lr,
+            learning_rate,
+            num_minibatches,
+            update_epochs,
+            num_updates,
+            max_grad_norm,
+            env_params,
         )
 
         # INIT ENV
@@ -774,12 +927,14 @@ def make_train(  # pylint: disable=W0102, R0913
         reset_rng = jax.random.split(reset_key, num_envs)
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
         # TRAIN LOOP
+        timestep = 0
         runner_state = RunnerState(
             actor_state=actor_state,
             critic_state=critic_state,
             env_state=env_state,
             last_obs=obsv,
             rng=rng,
+            timestep=timestep,
         )
         _update_step = partial(
             _update_step_pre_partial,
@@ -801,6 +956,10 @@ def make_train(  # pylint: disable=W0102, R0913
             shared_network=shared_network,
             vf_coef=vf_coef,
             advantage_normalization=advantage_normalization,
+            save=save,
+            save_folder=save_folder,
+            num_eval_envs=num_eval_envs,
+            num_updates=num_updates,
         )
         runner_state, _ = jax.lax.scan(
             f=_update_step, init=runner_state, xs=None, length=num_updates
