@@ -1,4 +1,5 @@
 """Helpers for weights&biases logging"""
+
 import os
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -43,9 +44,9 @@ def wandb_log(info, metrics, num_envs, shared_network=False):
         info["returned_episode"]
     ]  # get episodes that have finished
     timestep = jnp.max(info["timestep"]) * num_envs
-    wandb.log(
-        {"Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep}
-    )
+    wandb.log({
+        "Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep
+    })
     (
         total_loss,
         actor_loss,
@@ -75,7 +76,7 @@ def wandb_log(info, metrics, num_envs, shared_network=False):
 def log_model(model_path: Any, name: str):
     """Log the model weights to wandb"""
     artifact = wandb.Artifact(name=name, type="model")
-    artifact.add_dir(local_path=model_path)  # Add dataset directory to artifact
+    artifact.add_file(local_path=model_path)  # Add dataset directory to artifact
     wandb.log_artifact(artifact)  # Logs the artifact version "my_data:v0"
 
 
