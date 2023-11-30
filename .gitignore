@@ -160,7 +160,11 @@ cython_debug/
 #.idea/
 
 .vscode/
-
+.idea/
 *.txt
 
 wandb/*
+jaxppo/wandb/*
+csv_data
+tmp
+models
