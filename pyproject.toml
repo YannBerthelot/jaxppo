@@ -19,11 +19,11 @@ pandas = "^2.1.1"
 matplotlib = "^3.8.0"
 jaxlib = [
     {version = "0.4.20", platform = "darwin", source="pypi"},
-    {version = "0.4.20+cuda11.cudnn86", platform = "linux", source="jax"}
+    {version = "0.4.20+cuda12.cudnn89", platform = "linux", source="jax"}
 ]
 jax = [
-    {extras = ["cpu"], version = "^0.4.20", platform="darwin"},
-    {extras = ["cuda_11_pip"], version = "^0.4.20", platform="linux"}
+    {extras = ["cpu"], version = "^0.4.20", platform="darwin", source="pypi"},
+    {extras = ["cuda_12_pip"], version = "^0.4.20", platform="linux", source="jax"}
 ]
 
 
