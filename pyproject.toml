@@ -17,9 +17,13 @@ probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironme
 wandb = "^0.15.8"
 pandas = "^2.1.1"
 matplotlib = "^3.8.0"
+jaxlib = [
+    {version = "0.4.20", platform = "darwin", source="pypi"},
+    {version = "0.4.20+cuda11.cudnn86", platform = "linux", source="jax"}
+]
 jax = [
-    {extras = ["cpu"], version = ">=0.4.0", platform="darwin", source="pypi"},
-    {extras = ["cuda"], version = ">=0.4.0", platform="linux", source="jax"}
+    {extras = ["cpu"], version = "^0.4.20", platform="darwin"},
+    {extras = ["cuda_11_pip"], version = "^0.4.20", platform="linux"}
 ]
 
 
@@ -35,13 +39,14 @@ probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironme
 tox = "^4.6.4"
 
 [[tool.poetry.source]]
-name = "PyPI"
+name = "pypi"
 priority = "primary"
+
 
 [[tool.poetry.source]]
 name = "jax"
 url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
-priority = "supplemental"
+priority = "primary"
 
 
 [[tool.poetry.source]]
