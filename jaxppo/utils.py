@@ -3,7 +3,7 @@
 import os
 import pickle
 from functools import partial
-from typing import Any, Callable, Tuple, cast
+from typing import Any, Callable, Tuple, cast, Optional, TypeAlias
 
 import gymnasium as gym
 import gymnax
@@ -151,33 +151,33 @@ def load_model(
     )
 
 
-def check_update_frequency_for_video(num_update, num_updates, video_log_frequency):
-    if video_log_frequency is not None:
+def check_update_frequency(
+    num_update: int, num_total_updates: int, frequency: int
+) -> bool:
+    """Check wether or not to save according to the number of update. 
+    It will be true when either the number of update is a multiple of save_frequency \\
+        or total number of updates has been reached"""
+    if frequency is not None:
         cond = jnp.logical_or(
-            num_update == num_updates, num_update % (video_log_frequency - 1) == 0
+            num_update == num_total_updates, num_update % (frequency - 1) == 0
         )
     else:
-        cond = num_update == num_updates
+        cond = num_update == num_total_updates
     return cond
 
 
-def check_update_frequency_for_saving(num_update, num_updates, save_frequency):
-    if save_frequency is not None:
-        cond = jnp.logical_or(
-            num_update == num_updates, num_update % (save_frequency - 1) == 0
-        )
-    else:
-        cond = num_update == num_updates
-    return cond
+UpdateState = TypeAlias(Any)
 
 
 def save_video_to_wandb(
-    env_id,
-    env,
-    update_state,
+    env_id: Optional[str],
+    env: Environment,
+    update_state: UpdateState,
     rng: jax.random.PRNGKeyArray,
-    params,
-):
+    params: EnvParams,
+) -> None:
+    """Generate an episode using the current agent state and log its video to wandb"""
+
     if isinstance(env_id, str):
         env_render = gym.make(env_id, render_mode="rgb_array")
         obs_render, _ = env_render.reset(seed=42)

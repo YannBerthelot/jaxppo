@@ -20,8 +20,7 @@ from jaxppo.networks.networks import (
 )
 from jaxppo.utils import (
     annealed_linear_schedule,
-    check_update_frequency_for_saving,
-    check_update_frequency_for_video,
+    check_update_frequency,
     get_parameterized_schedule,
     save_model,
     save_video_to_wandb,
@@ -775,6 +774,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         )
         return reward_collected
 
+    # Evaluation over num eval envs
     eval_rewards = jax.vmap(collect_rollout, in_axes=0)(
         jax.random.split(update_state.rng, num_eval_envs)
     )
@@ -798,8 +798,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
         num_update=num_update + 1,
     )
 
-    # Save model at the end
-
+    # Save model and video if needed
     _save_video_to_wandb = partial(save_video_to_wandb, env_id, env)
 
     def save_video_callback(update_state, params):
@@ -807,7 +806,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
 
     if log_video:
         jax.lax.cond(
-            check_update_frequency_for_video(
+            check_update_frequency(
                 runner_state.num_update, num_updates, video_log_frequency
             ),
             save_video_callback,
@@ -822,7 +821,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
 
     if save:
         jax.lax.cond(
-            check_update_frequency_for_saving(
+            check_update_frequency(
                 runner_state.num_update, num_updates, save_frequency
             ),
             save_model_cond,
