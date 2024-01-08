@@ -1,15 +1,24 @@
 """Helper functions for various modules"""
+
+import os
+import pickle
 from functools import partial
 from typing import Any, Callable, Tuple, cast
 
 import gymnasium as gym
 import gymnax
 import jax
+import jax.numpy as jnp
+import numpy as np
+from flax.serialization import from_state_dict, to_state_dict
+from flax.training.train_state import TrainState
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from gymnax import EnvParams
 from gymnax.environments.environment import Environment
 from jax import random
 
+import wandb
+from jaxppo.wandb_logging import log_model
 from jaxppo.wrappers import LogWrapper
 
 
@@ -102,9 +111,7 @@ def get_parameterized_schedule(
     return partial(linear_scheduler, **scheduler_kwargs)
 
 
-def make_gymnax_env(
-    env_id: str, seed: int
-) -> tuple[
+def make_gymnax_env(env_id: str, seed: int) -> tuple[
     Environment,
     EnvParams,
     tuple[random.PRNGKeyArray, random.PRNGKeyArray, random.PRNGKeyArray],
@@ -114,3 +121,93 @@ def make_gymnax_env(
     rng, key_reset, key_policy, key_step = jax.random.split(rng, 4)
     env, env_params = gymnax.make(env_id)
     return env, env_params, (key_reset, key_policy, key_step)
+
+
+def save_model(
+    actor: TrainState,
+    critic: TrainState,
+    idx: int,
+    log: bool = True,
+    save_folder: str = "./models",
+):
+    """Save the actor and critic state to the specified folder. Log the model to wandb if selected."""
+    os.makedirs(save_folder, exist_ok=True)
+    path = os.path.join(save_folder, f"update_{idx}.pkl")
+    dict_to_save = {"actor": to_state_dict(actor), "critic": to_state_dict(critic)}
+    with open(path, "wb") as handle:
+        pickle.dump(dict_to_save, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    if log:
+        log_model(path, "actor_critic_model")
+
+
+def load_model(
+    path: str, actor: TrainState, critic: TrainState
+) -> tuple[TrainState, TrainState]:
+    """Load actor and critic state from the save file in path"""
+    with open(path, "rb") as handle:
+        actor_and_critic = pickle.load(handle)
+    return from_state_dict(actor, actor_and_critic["actor"]), from_state_dict(
+        critic, actor_and_critic["critic"]
+    )
+
+
+def check_update_frequency_for_video(num_update, num_updates, video_log_frequency):
+    if video_log_frequency is not None:
+        cond = jnp.logical_or(
+            num_update == num_updates, num_update % (video_log_frequency - 1) == 0
+        )
+    else:
+        cond = num_update == num_updates
+    return cond
+
+
+def check_update_frequency_for_saving(num_update, num_updates, save_frequency):
+    if save_frequency is not None:
+        cond = jnp.logical_or(
+            num_update == num_updates, num_update % (save_frequency - 1) == 0
+        )
+    else:
+        cond = num_update == num_updates
+    return cond
+
+
+def save_video_to_wandb(
+    env_id,
+    env,
+    update_state,
+    rng: jax.random.PRNGKeyArray,
+    params,
+):
+    if isinstance(env_id, str):
+        env_render = gym.make(env_id, render_mode="rgb_array")
+        obs_render, _ = env_render.reset(seed=42)
+    else:
+        env_render = env
+        rng, reset_key = jax.random.split(rng)
+        obs_render, state = env.reset(reset_key)
+        screen = None
+        clock = None
+
+    done = False
+    frames = []
+    FPS = 50
+
+    while not done:
+        rng, action_key = jax.random.split(rng)
+        action = update_state.actor_state.apply_fn(
+            update_state.actor_state.params, jnp.array(obs_render)
+        ).sample(seed=action_key)
+
+        if isinstance(env_id, str):
+            obs_render, _, terminated, truncated, _ = env_render.step(action.item())
+            done = terminated | truncated
+            new_frames = env_render.render()
+            frames.append(new_frames)
+        else:
+            obs_render, state, _, done, _ = env_render.step(rng, state, action, params)
+            frames, screen, clock = env_render.render(
+                screen, state, params, frames, clock
+            )
+
+    frames_correct_order = np.array(frames).swapaxes(1, 3).swapaxes(2, 3)
+    wandb.log({"video": wandb.Video(frames_correct_order, fps=FPS)})

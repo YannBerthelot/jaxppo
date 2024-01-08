@@ -1,4 +1,5 @@
 """Config for PPO agent"""
+
 import json
 from typing import Any, NoReturn, Optional, Sequence
 
@@ -39,6 +40,9 @@ class PPOConfig(BaseModel):
     lstm_hidden_size: int = 64
     save: bool = False
     save_folder: str = "./models"
+    log_video: bool = False
+    log_video_frequency: Optional[int] = None
+    save_frequency: Optional[int] = None
 
     @field_validator("vf_coef")
     @classmethod

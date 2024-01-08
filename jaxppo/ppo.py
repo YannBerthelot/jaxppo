@@ -1,4 +1,5 @@
 """PPO class to easily handle the agent"""
+
 from typing import Optional
 
 import gymnax
@@ -12,7 +13,8 @@ from jaxppo.config import PPOConfig
 from jaxppo.networks.networks import predict_probs as network_predict_probs
 from jaxppo.networks.networks import predict_probs_and_value
 from jaxppo.networks.networks import predict_value as network_predict_value
-from jaxppo.train import init_agent, load_model, make_train
+from jaxppo.train import init_agent, make_train
+from jaxppo.utils import load_model
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
 
 
@@ -44,6 +46,9 @@ class PPO:
         advantage_normalization: bool = True,
         save: bool = False,
         save_folder: str = "./models",
+        log_video: bool = False,
+        video_log_frequency: Optional[int] = None,
+        save_frequency: Optional[int] = None,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -97,6 +102,9 @@ class PPO:
             advantage_normalization=advantage_normalization,
             save=save,
             save_folder=save_folder,
+            log_video=log_video,
+            log_video_frequency=video_log_frequency,
+            save_frequency=save_frequency,
         )
         key = random.PRNGKey(0)
         num_updates = total_timesteps // num_steps // num_envs
@@ -176,6 +184,9 @@ class PPO:
             advantage_normalization=self.config.advantage_normalization,
             save=self.config.save,
             save_folder=self.config.save_folder,
+            save_frequency=self.config.save_frequency,
+            video_log_frequency=self.config.log_video_frequency,
+            log_video=self.config.log_video,
         )
 
         runner_state = train_jit(key)
@@ -290,6 +301,8 @@ if __name__ == "__main__":
         max_grad_norm=0.5,
         vf_coef=0.5,
         save=True,
+        log_video=True,
+        video_log_frequency=20,
     )
 
     def training_loop(seed):

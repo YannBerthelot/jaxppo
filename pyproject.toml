@@ -25,6 +25,7 @@ jax = [
     {extras = ["cpu"], version = "^0.4.20", platform="darwin", source="pypi"},
     {extras = ["cuda_12_pip"], version = "^0.4.20", platform="linux", source="jax"}
 ]
+distrax = "^0.1.5"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -37,6 +38,10 @@ pre-commit = "^3.3.3"
 pytest = "7.4.0"
 probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git", rev = "gymnax"}
 tox = "^4.6.4"
+
+
+[tool.poetry.group.render.dependencies]
+moviepy = "^1.0.3"
 
 [[tool.poetry.source]]
 name = "pypi"

@@ -1,6 +1,5 @@
 """Pure jax PPO training"""
-import os
-import pickle
+
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
@@ -8,7 +7,6 @@ import gymnax
 import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
-from flax.serialization import from_state_dict, to_state_dict
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams, EnvState
 from gymnax.wrappers.purerl import GymnaxWrapper
@@ -20,36 +18,15 @@ from jaxppo.networks.networks import (
     init_actor_and_critic_state,
     init_networks,
 )
-from jaxppo.utils import annealed_linear_schedule, get_parameterized_schedule
-from jaxppo.wandb_logging import log_model, log_variables
-
-
-def save_model(
-    actor: TrainState,
-    critic: TrainState,
-    idx: int,
-    log: bool = True,
-    save_folder: str = "./models",
-):
-    """Save the actor and critic state to the specified folder. Log the model to wandb if selected."""
-    os.makedirs(save_folder, exist_ok=True)
-    path = os.path.join(save_folder, f"update_{idx}.pkl")
-    dict_to_save = {"actor": to_state_dict(actor), "critic": to_state_dict(critic)}
-    with open(path, "wb") as handle:
-        pickle.dump(dict_to_save, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    if log:
-        log_model(path, "actor_critic_model")
-
-
-def load_model(
-    path: str, actor: TrainState, critic: TrainState
-) -> tuple[TrainState, TrainState]:
-    """Load actor and critic state from the save file in path"""
-    with open(path, "rb") as handle:
-        actor_and_critic = pickle.load(handle)
-    return from_state_dict(actor, actor_and_critic["actor"]), from_state_dict(
-        critic, actor_and_critic["critic"]
-    )
+from jaxppo.utils import (
+    annealed_linear_schedule,
+    check_update_frequency_for_saving,
+    check_update_frequency_for_video,
+    get_parameterized_schedule,
+    save_model,
+    save_video_to_wandb,
+)
+from jaxppo.wandb_logging import log_variables
 
 
 class Transition(NamedTuple):
@@ -392,7 +369,10 @@ def _update_minbatch_pre_partial(  # pylint: disable=R0914
     shared_network: bool,
     vf_coef: float,
     advantage_normalization: bool,
-) -> tuple[tuple[TrainState, TrainState], tuple[jax.Array, ...],]:
+) -> tuple[
+    tuple[TrainState, TrainState],
+    tuple[jax.Array, ...],
+]:
     """
     Update the actor and critic state over a minibatch of trajectories.
 
@@ -496,7 +476,10 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
     shared_network: bool,
     vf_coef: float,
     advantage_normalization: bool,
-) -> tuple[UpdateState, tuple[jax.Array, jax.Array, jax.Array, jax.Array],]:
+) -> tuple[
+    UpdateState,
+    tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+]:
     """
     Update the actor and critic states over an epoch of num_minibatches minibatches.\
           Collect losses for logging.
@@ -648,6 +631,10 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     save_folder: str,
     num_eval_envs: int,
     num_updates: int,
+    log_video: bool = False,
+    video_log_frequency: Optional[int] = None,
+    save_frequency: Optional[int] = None,
+    env_id: Optional[str] = None,
 ) -> tuple[RunnerState, dict]:
     """
     Update the agent (actor and critic network states) on the provided environment(s)\
@@ -812,11 +799,22 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     )
 
     # Save model at the end
-    def check_update_frequency(num_update):
-        cond = jnp.logical_or(num_update == num_updates, num_update % 10 == 0)
-        # jax.debug.print("{num_update}{cond}", num_update=num_update, cond=cond)
-        return cond
 
+    _save_video_to_wandb = partial(save_video_to_wandb, env_id, env)
+
+    def save_video_callback(update_state, params):
+        jax.debug.callback(_save_video_to_wandb, update_state, update_state.rng, params)
+
+    if log_video:
+        jax.lax.cond(
+            check_update_frequency_for_video(
+                runner_state.num_update, num_updates, video_log_frequency
+            ),
+            save_video_callback,
+            lambda update_state, params: None,
+            update_state,
+            env_params,
+        )
     _save_model = partial(save_model, save_folder=save_folder)
 
     def save_model_cond(actor, critic, index, log):
@@ -824,7 +822,9 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
 
     if save:
         jax.lax.cond(
-            check_update_frequency(runner_state.num_update),
+            check_update_frequency_for_saving(
+                runner_state.num_update, num_updates, save_frequency
+            ),
             save_model_cond,
             lambda actor, critic, index, log: None,
             update_state.actor_state,
@@ -861,6 +861,9 @@ def make_train(  # pylint: disable=W0102, R0913
     save: bool = False,
     save_folder: str = "./models",
     num_eval_envs: int = 4,
+    log_video: bool = False,
+    video_log_frequency: Optional[int] = None,
+    save_frequency: Optional[int] = None,
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -897,8 +900,20 @@ def make_train(  # pylint: disable=W0102, R0913
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
     if isinstance(env_id, str):
-        env_id, env_params = gymnax.make(env_id)
-    env = env_id
+        env, env_params = gymnax.make(env_id)
+    else:
+        env = env_id
+        env_id = None  # To prepare video saving
+
+    if log_video:
+        if not isinstance(env_id, str):
+            try:
+                env.render()
+            except AttributeError:
+                print(
+                    f"Environment {env} has no render method yet video saving is"
+                    " enabled."
+                )
 
     def train(
         key: random.PRNGKeyArray,
@@ -960,6 +975,10 @@ def make_train(  # pylint: disable=W0102, R0913
             save_folder=save_folder,
             num_eval_envs=num_eval_envs,
             num_updates=num_updates,
+            log_video=log_video,
+            video_log_frequency=video_log_frequency,
+            save_frequency=save_frequency,
+            env_id=env_id,
         )
         runner_state, _ = jax.lax.scan(
             f=_update_step, init=runner_state, xs=None, length=num_updates
