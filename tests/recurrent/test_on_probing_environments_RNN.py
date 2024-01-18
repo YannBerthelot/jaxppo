@@ -1,6 +1,7 @@
 """
 Premade connectors for stable-baselines3
 """
+
 from functools import partial
 
 # pylint: disable=W0613
@@ -22,9 +23,7 @@ from probing_environments.checks import (
 from probing_environments.utils.type_hints import AgentType
 
 from jaxppo.networks.networks_RNN import init_hidden_state as _init_hidden_state
-from jaxppo.networks.utils import ScannedRNN
-from jaxppo.ppo import PPO as classical_PPO
-from jaxppo.ppo_rnn import PPO
+from jaxppo.ppo import PPO
 
 
 @struct.dataclass
@@ -113,7 +112,7 @@ def get_value(
     Returns:
         np.ndarray: The predicted value of the given observation.
     """
-    return agent.predict_value_and_hidden(obs, done, hidden)[1].item()
+    return agent.predict_value(obs, hidden, done)[0].item()
 
 
 def get_policy(agent: PPO, obs: np.ndarray) -> List[float]:
@@ -245,14 +244,14 @@ LSTM_HIDDEN_SIZE = 32
 
 def init_hidden_state():
     """Init the hidden state of the RNN layer"""
-    return _init_hidden_state(ScannedRNN(LSTM_HIDDEN_SIZE), 1, jax.random.PRNGKey(0))
+    return _init_hidden_state(LSTM_HIDDEN_SIZE, 1, jax.random.PRNGKey(0))
 
 
 def compute_next_critic_hidden(
     agent: AGENT, obs: np.ndarray, done: bool, hidden: np.ndarray
-) -> tuple[jax.Array, jax.Array]:
+) -> jax.Array:
     """Get the next critic hidden state"""
-    return agent.predict_value_and_hidden(obs, done, hidden)[0]
+    return agent.predict_value(obs, hidden, done)[1]
 
 
 def test_check_recurrent_agent():
@@ -299,7 +298,7 @@ def classical_init_agent(
         AgentType: Your agent with the right settings.
     """
     env_params = EnvParams()
-    agent = classical_PPO(
+    agent = PPO(
         total_timesteps=budget,
         num_envs=num_envs,
         num_steps=32,
@@ -312,7 +311,7 @@ def classical_init_agent(
 
 
 def classical_get_value(
-    agent: classical_PPO, obs: np.ndarray, done: Any = None, hidden: Any = None
+    agent: PPO, obs: np.ndarray, done: Any = None, hidden: Any = None
 ) -> np.ndarray:
     """
     Predict the value of a given obs (in numpy array format) using your current value \
@@ -345,7 +344,7 @@ def test_check_non_recurrent_agent_fails():
     """
     with pytest.raises(AssertionError):
         check_recurrent_agent(
-            classical_PPO,
+            PPO,
             classical_init_agent,
             train_agent,
             get_value_recurrent=classical_get_value,

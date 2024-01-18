@@ -3,7 +3,7 @@
 import os
 import pickle
 from functools import partial
-from typing import Any, Callable, Tuple, cast, Optional, TypeAlias
+from typing import Any, Callable, Optional, Tuple, TypeAlias, cast
 
 import gymnasium as gym
 import gymnax
@@ -114,7 +114,7 @@ def get_parameterized_schedule(
 def make_gymnax_env(env_id: str, seed: int) -> tuple[
     Environment,
     EnvParams,
-    tuple[random.PRNGKeyArray, random.PRNGKeyArray, random.PRNGKeyArray],
+    tuple[jax.Array, jax.Array, jax.Array],
 ]:
     """Create a gymnax env and associated values for the given env id and seed"""
     rng = jax.random.PRNGKey(seed)
@@ -152,9 +152,9 @@ def load_model(
 
 
 def check_update_frequency(
-    num_update: int, num_total_updates: int, frequency: int
+    num_update: int, num_total_updates: int, frequency: Optional[int] = None
 ) -> bool:
-    """Check wether or not to save according to the number of update. 
+    """Check wether or not to save according to the number of update.
     It will be true when either the number of update is a multiple of save_frequency \\
         or total number of updates has been reached"""
     if frequency is not None:
@@ -166,14 +166,14 @@ def check_update_frequency(
     return cond
 
 
-UpdateState = TypeAlias(Any)
+UpdateState: TypeAlias = Any
 
 
 def save_video_to_wandb(
     env_id: Optional[str],
     env: Environment,
     update_state: UpdateState,
-    rng: jax.random.PRNGKeyArray,
+    rng: jax.Array,
     params: EnvParams,
 ) -> None:
     """Generate an episode using the current agent state and log its video to wandb"""

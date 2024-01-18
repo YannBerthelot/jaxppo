@@ -1,4 +1,5 @@
 """Networks initialization"""
+
 from typing import Callable, Optional, Sequence, Tuple, Union
 
 import distrax
@@ -33,7 +34,6 @@ class NetworkRNN(nn.Module):
     input_architecture: Sequence[Union[str, ActivationFunction]]
     actor: bool
     num_of_actions: Optional[int] = None
-    shared_network: bool = False
     multiple_envs: bool = True
     lstm_hidden_size: int = 64
 
@@ -60,23 +60,23 @@ class NetworkRNN(nn.Module):
                 kernel_init=orthogonal(0.01),
                 bias_init=constant(0.0),
             )(embedding)
-            return extractor_hiddens, distrax.Categorical(logits=logits)
+            return distrax.Categorical(logits=logits), extractor_hiddens
         val = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
             embedding
         )
-        return extractor_hiddens, (
+        return (
             jnp.squeeze(val, axis=-1) if self.multiple_envs else val
-        )
+        ), extractor_hiddens
 
 
 def init_hidden_state(
-    layer,
+    lstm_hidden_size: int,
     num_envs: int,
     rng: jax.random.PRNGKey,
 ) -> HiddenState:
     """Initialize the hidden state for the recurrent layer of the network."""
     rng, _rng = jax.random.split(rng)
-    return layer.initialize_carry(_rng, num_envs)
+    return ScannedRNN(lstm_hidden_size).initialize_carry(_rng, num_envs)
 
 
 def init_networks(
@@ -130,28 +130,24 @@ def init_actor_and_critic_state(
     critic_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
     critic_network: NetworkRNN,
     lstm_hidden_size: int = 64,
-) -> Tuple[TrainState, Optional[TrainState], HiddenState, HiddenState]:
+) -> Tuple[tuple[TrainState, TrainState], tuple[HiddenState, HiddenState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     init_x = (
         jnp.zeros((1, num_envs, *env.observation_space(env_params).shape)),
         jnp.zeros((1, num_envs)),
     )
     rng, actor_key, critic_key = jax.random.split(rng, num=3)
-    init_hstate_actor = init_hidden_state(
-        ScannedRNN(lstm_hidden_size), num_envs, actor_key
-    )
-    init_hstate_critic = init_hidden_state(
-        ScannedRNN(lstm_hidden_size), num_envs, critic_key
-    )
-    actor_params = actor_network.init(actor_key, init_hstate_actor, init_x)
-    critic_params = critic_network.init(critic_key, init_hstate_critic, init_x)
+    init_hidden_state_actor = init_hidden_state(lstm_hidden_size, num_envs, actor_key)
+    init_hidden_state_critic = init_hidden_state(lstm_hidden_size, num_envs, critic_key)
+    actor_params = actor_network.init(actor_key, init_hidden_state_actor, init_x)
+    critic_params = critic_network.init(critic_key, init_hidden_state_critic, init_x)
     actor = TrainState.create(
         params=actor_params, tx=actor_tx, apply_fn=actor_network.apply
     )
     critic = TrainState.create(
         params=critic_params, tx=critic_tx, apply_fn=critic_network.apply
     )
-    return actor, critic, init_hstate_actor, init_hstate_critic
+    return (actor, critic), (init_hidden_state_actor, init_hidden_state_critic)
 
 
 def predict_probs_and_value(
@@ -169,7 +165,7 @@ def predict_value_and_hidden(
     hidden: HiddenState,
     obs: ndarray,
     done: ndarray,
-) -> Array:
+) -> tuple[Array, HiddenState]:
     """Return the predicted value of the given obs with the current critic state"""
     return critic_state.apply_fn(critic_params, hidden, (obs, done))  # type: ignore[attr-defined]
 
@@ -182,4 +178,15 @@ def predict_probs(
     done: ndarray,
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
-    return actor_state.apply_fn(actor_params, hidden, (obs, done))[1].probs  # type: ignore[attr-defined]
+    return actor_state.apply_fn(actor_params, hidden, (obs, done))[0].probs  # type: ignore[attr-defined]
+
+
+def get_pi(
+    actor_state: TrainState,
+    actor_params: FrozenDict,
+    hidden: HiddenState,
+    obs: ndarray,
+    done: ndarray,
+) -> Array:
+    """Return the predicted action logits of the given obs with the current actor state"""
+    return actor_state.apply_fn(actor_params, hidden, (obs, done))  # type: ignore[attr-defined]

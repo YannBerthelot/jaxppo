@@ -2,13 +2,17 @@
 Extract multiple runs from a merged-wandb run due to lack of multithreading.
 See: https://community.wandb.ai/t/how-to-split-runs-because-of-lack-of-multithreading-given-a-metric/4856
 """
+
 import glob
 import json
 import os
 from typing import Any, Generator, Optional
 
-import wandb
+import matplotlib.pyplot as plt
+import pandas as pd
 from tqdm import tqdm
+
+import wandb
 
 WandbRun = Any
 os.environ["WANDB_ENTITY"] = "yann-berthelot"
@@ -97,6 +101,20 @@ def upload_runs(project_name: str, run_name: str, runs: list, config: dict) -> N
         os.system(f"wandb sync --clean-force {file} ")
 
 
+def save_split_data_to_csv(split_data, config, run_name):
+    folder_name = "csv_data"
+    os.makedirs(os.path.join(folder_name, run_name), exist_ok=True)
+    with open(os.path.join(folder_name, run_name, "config.json"), "w") as outfile:
+        json.dump(config, outfile)
+    df = pd.DataFrame.from_dict(split_data[0])
+    df["seed"] = 0
+    for i, run in enumerate(split_data[1:]):
+        run_df = pd.DataFrame.from_dict(run)
+        run_df["seed"] = i + 1
+        df = pd.concat((df, run_df))
+    df.to_csv(os.path.join(folder_name, run_name, f"{run_name}.csv"))
+
+
 def split_runs_and_upload_them(
     runs: list[int],
     user_name: str,
@@ -123,6 +141,7 @@ def split_runs_and_upload_them(
             run_number, user_name, project_name_in
         )  # TODO :Be able to work with other runs? by name ?
         runs, config, name = split_run(run, num_split)
+        save_split_data_to_csv(runs, config, name)
         if project_name_out is None:
             project_name_out = project_name_in
         print("Runs split. Uploading runs.")
@@ -130,12 +149,46 @@ def split_runs_and_upload_them(
         print("Uploading done.")
 
 
+def concat_multiple_files():
+    raise NotImplementedError
+
+
+def plot_area(top, bottom, middle):
+    raise NotImplementedError
+
+
+def get_top_bottom_and_middle_from_column():
+    raise NotImplementedError
+
+
+def plot_and_save_agregated_metrics():
+    raise NotImplementedError
+
+
 if __name__ == "__main__":
-    runs = [0, 1, 2, 3]
-    split_runs_and_upload_them(
-        runs,
-        os.environ["WANDB_ENTITY"],
-        project_name_in="Benchmark delay merged",
-        project_name_out="Benchmark delay merged out",
-        num_split=10,
+    runs = list(range(11))
+    # split_runs_and_upload_them(
+    #     runs,
+    #     os.environ["WANDB_ENTITY"],
+    #     project_name_in="Benchmark delay merged",
+    #     project_name_out="Benchmark delay merged out",
+    #     num_split=100,
+    # )
+
+    df = pd.read_csv(
+        "/Users/yann/Documents/jaxppo/csv_data/jax delayed delay=10/jax delayed"
+        " delay=10.csv",
+        index_col=0,
     )
+
+    aggregated_df = df.reset_index().groupby("index")
+
+    def get_aggregation_from_df(df, aggregator):
+        if aggregator == "mean":
+            return df.mean()
+        raise NotImplementedError
+
+    mean_df = get_aggregation_from_df(aggregated_df, "mean")
+
+    ax = mean_df.plot(subplots=True)
+    plt.show()

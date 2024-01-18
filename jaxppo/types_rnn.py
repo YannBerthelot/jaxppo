@@ -1,9 +1,9 @@
 """Type hints for the rnn agents"""
-from typing import NamedTuple, Optional
+
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
-from jax import random
 
 HiddenState = jax.Array
 
@@ -20,62 +20,28 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
-# class RunnerState(NamedTuple):
-#     """The current agent state used to step the env"""
-
-#     actor_state: jnp.ndarray
-#     critic_state: Optional[jnp.ndarray]
-#     env_state: jnp.ndarray
-#     last_obs: jnp.ndarray
-#     last_done: jnp.ndarray
-#     actor_hstate: jnp.ndarray
-#     critic_hstate: jnp.ndarray
-#     rng: random.PRNGKeyArray
-
 RunnerState = tuple[
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    jnp.ndarray,
-    random.PRNGKeyArray,
+    jnp.ndarray,  # actor_state
+    jnp.ndarray,  # critic_state
+    jnp.ndarray,  # env_state
+    jnp.ndarray,  # last_obs
+    jnp.ndarray,  # last_done
+    jnp.ndarray,  # actor_hidden_state
+    jnp.ndarray,  # critic_hidden_state
+    jax.Array,  # rng
 ]
-
-
-# class UpdateState(NamedTuple):
-#     """The current state of the updated parameters and the required variables\
-#           for the update"""
-
-#     actor_state: jnp.ndarray
-#     critic_state: Optional[jnp.ndarray]
-#     traj_batch: Transition
-#     advantages: jnp.ndarray
-#     targets: jnp.ndarray
-#     rng: random.PRNGKeyArray
-#     actor_hstate: jnp.ndarray
-#     critic_hstate: jnp.ndarray
-
 
 UpdateState = tuple[
-    jnp.ndarray,
-    Optional[jnp.ndarray],
-    Transition,
-    jnp.ndarray,
-    jnp.ndarray,
-    random.PRNGKeyArray,
-    jnp.ndarray,
-    jnp.ndarray,
+    jnp.ndarray,  # actor_state
+    jnp.ndarray,  # critic_state
+    Transition,  # traj_batch
+    jnp.ndarray,  # advantages
+    jnp.ndarray,  # targets
+    jax.Array,  # rng
+    jnp.ndarray,  # actor_hidden_state
+    jnp.ndarray,  # critic_hidden_state
 ]
 
-
-# class BatchInfo(NamedTuple):
-#     traj_batch: Transition
-#     advantages: jnp.ndarray
-#     targets: jnp.ndarray
-#     actor_hstate: Optional[jnp.ndarray] = None
-#     critic_hstate: Optional[jnp.ndarray] = None
-
-
-BatchInfo = tuple[Transition, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+BatchInfo = tuple[
+    Transition, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray
+]  # traj_batch, advantages, targets, actor_hidden_state, critic_hidden_state

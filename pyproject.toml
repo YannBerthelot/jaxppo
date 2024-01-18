@@ -26,6 +26,7 @@ jax = [
     {extras = ["cuda_12_pip"], version = "^0.4.20", platform="linux", source="jax"}
 ]
 distrax = "^0.1.5"
+flax = "^0.7.5"
 
 
 [tool.poetry.group.dev.dependencies]

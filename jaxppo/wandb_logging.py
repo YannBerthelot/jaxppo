@@ -38,7 +38,7 @@ def init_logging(logging_config: LoggingConfig):
     )
 
 
-def wandb_log(info, metrics, num_envs, shared_network=False):
+def wandb_log(info, metrics, num_envs):
     """Extract meaningful values from the info buffer and log them into wandb"""
     return_values = info["returned_episode_returns"][
         info["returned_episode"]
@@ -48,7 +48,6 @@ def wandb_log(info, metrics, num_envs, shared_network=False):
         "Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep
     })
     (
-        total_loss,
         actor_loss,
         critic_loss,
         simple_actor_loss,
@@ -68,8 +67,6 @@ def wandb_log(info, metrics, num_envs, shared_network=False):
         "Losses/actor loss without entropy": simple_actor_loss.mean(),
         "Losses/entropy loss": entropy_loss.mean(),
     }
-    if shared_network:
-        losses_dict["Train/total_loss"] = total_loss.mean()
     jax.debug.callback(log_variables, losses_dict)
 
 

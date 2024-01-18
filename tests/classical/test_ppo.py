@@ -37,7 +37,7 @@ def test_compute_gae():
     gamma = 0.5
     gae_lambda = 0.95
     advantages, targets = _calculate_gae(
-        traj_batch, last_val, gamma=gamma, gae_lambda=gae_lambda
+        traj_batch, last_val, last_done=None, gamma=gamma, gae_lambda=gae_lambda
     )
     ##### from sb3 #####
     last_gae_lam = 0
@@ -141,26 +141,6 @@ def test_trained_ppo_pre_defined_wrapped_env():
 #     )
 #     with pytest.raises(ValueError):
 # agent.test(seed=42, n_episodes=10)
-
-
-def test_ppo_train_and_test_shared_network():
-    """Test that the ppo train function doesn't fail"""
-    num_envs = NUM_ENVS
-    num_steps = NUM_STEPS
-    total_timesteps = TOTAL_TIMESTEPS
-    learning_rate = 2.5e-4
-    env_id = "CartPole-v1"
-    agent = PPO(
-        total_timesteps=total_timesteps,
-        num_steps=num_steps,
-        num_envs=num_envs,
-        env_id=env_id,
-        learning_rate=learning_rate,
-        actor_architecture=ARCHITECTURE,
-        shared_network=True,
-        vf_coef=0.5,
-    )
-    agent.train(seed=42, test=True)
 
 
 def test_ppo_train_and_test():

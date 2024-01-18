@@ -1,6 +1,7 @@
 """
 Premade connectors for stable-baselines3
 """
+
 from functools import partial
 
 # pylint: disable=W0613
@@ -104,7 +105,7 @@ def get_value(agent: PPO, obs: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: The predicted value of the given observation.
     """
-    return agent.predict_value(obs)
+    return agent.predict_value(obs)[0]
 
 
 def get_policy(agent: PPO, obs: np.ndarray) -> List[float]:

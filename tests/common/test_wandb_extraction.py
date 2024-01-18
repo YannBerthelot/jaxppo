@@ -3,8 +3,8 @@ import os
 from typing import Any
 
 import jax
-import wandb
 
+import wandb
 from jaxppo.wandb_extraction import split_run
 
 WandbRun = Any
