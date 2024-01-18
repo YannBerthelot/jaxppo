@@ -120,7 +120,7 @@ def test_trained_ppo_pre_defined_wrapped_env():
 def test_ppo_train():
     """Test that the ppo train function doesn't fail"""
     num_envs = 4
-    num_steps = 4
+    num_steps = 16
     total_timesteps = int(num_envs * num_steps * 2)
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
@@ -133,6 +133,7 @@ def test_ppo_train():
         actor_architecture=["4", "tanh"],
         critic_architecture=["4", "tanh"],
         lstm_hidden_size=2,
+        num_minibatches=8,
     )
     agent.train(seed=42, test=False)
 

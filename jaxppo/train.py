@@ -26,8 +26,8 @@ from jaxppo.utils import (
     check_update_frequency,
     get_parameterized_schedule,
     save_model,
-    save_video_to_wandb,
 )
+from jaxppo.video import save_video_to_wandb
 from jaxppo.wandb_logging import log_variables
 
 
@@ -476,10 +476,11 @@ def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
     assert (
         batch_size == num_steps * num_envs
     ), "batch size must be equal to number of steps * number of envs"
-    permutation = jax.random.permutation(
-        permutation_key, num_envs if recurrent else batch_size
-    )
-    if recurrent:
+    # permutation = jax.random.permutation(
+    #     permutation_key, num_envs if recurrent else batch_size
+    # )
+    permutation = jax.random.permutation(permutation_key, batch_size)
+    if recurrent:  # TODO : investigate why it's so slow with high batch_size
         batch = (
             update_state.traj_batch,
             update_state.advantages,
@@ -830,7 +831,7 @@ def _update_step_pre_partial(  # pylint: disable=R0913,R0914
     )
 
     # Save model and video if needed
-    _save_video_to_wandb = partial(save_video_to_wandb, env_id, env)
+    _save_video_to_wandb = partial(save_video_to_wandb, env_id, env, recurrent)
 
     def save_video_callback(update_state, params):
         jax.debug.callback(_save_video_to_wandb, update_state, update_state.rng, params)

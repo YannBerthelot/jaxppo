@@ -359,7 +359,8 @@ if __name__ == "__main__":
         max_grad_norm=0.5,
         save=True,
         log_video=True,
-        video_log_frequency=20,
+        video_log_frequency=None,
+        # lstm_hidden_size=16,
     )
 
     def training_loop(seed):
