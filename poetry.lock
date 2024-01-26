@@ -1885,7 +1885,7 @@ pytest = "^7.4.0"
 type = "git"
 url = "https://github.com/YannBerthelot/ProbingEnvironments.git"
 reference = "gymnax"
-resolved_reference = "51d28d1cb6ba7e603200bc1c4dc265809a069a85"
+resolved_reference = "a8a0cadd4c86928bf09cd7039b3bbd53e33d70c7"
 
 [[package]]
 name = "proglog"

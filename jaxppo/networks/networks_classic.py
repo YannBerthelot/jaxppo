@@ -76,6 +76,7 @@ class Network(nn.Module):
     actor: bool
     num_of_actions: Optional[int] = None
     multiple_envs: bool = True
+    continuous: bool = False
 
     @property
     def architecture(self) -> nn.Sequential:
@@ -87,8 +88,16 @@ class Network(nn.Module):
                 "Got unexpected num of actions :"
                 f" {self.num_of_actions} {type(self.num_of_actions)}"
             )
-
         if self.actor:
+            if self.continuous:
+                return nn.Sequential([
+                    *parse_architecture(self.input_architecture),
+                    nn.Dense(
+                        self.num_of_actions,
+                        kernel_init=orthogonal(0.01),
+                        bias_init=constant(0.0),
+                    ),
+                ])
             return nn.Sequential([
                 *parse_architecture(self.input_architecture),
                 nn.Dense(
@@ -111,6 +120,18 @@ class Network(nn.Module):
     @nn.compact
     def __call__(self, x: Array):
         if self.actor:
+            if self.continuous:
+                actor_mean = self.architecture(x)
+                actor_logtstd = self.param(
+                    "log_std",
+                    nn.initializers.zeros,
+                    self.num_of_actions,
+                )
+                return distrax.Normal(actor_mean, jnp.exp(actor_logtstd))
+                # return distrax.ClippedNormal(
+                #     actor_mean, jnp.exp(actor_logtstd), minimum=-1, maximum=1
+                # )
+
             return self.architecture(x)
         return (
             self.architecture(x).squeeze()
@@ -124,6 +145,7 @@ def init_networks(
     actor_architecture: Sequence[Union[str, ActivationFunction]],
     critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
     multiple_envs: bool = True,
+    continuous: bool = False,
 ) -> Tuple[Network, Network]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
@@ -132,6 +154,7 @@ def init_networks(
         input_architecture=actor_architecture,
         actor=True,
         num_of_actions=num_actions,
+        continuous=continuous,
     )
     critic = Network(
         input_architecture=critic_architecture, actor=False, multiple_envs=multiple_envs
@@ -204,4 +227,5 @@ def predict_probs(
 
 def get_pi(actor_state: TrainState, actor_params: FrozenDict, obs: ndarray) -> Array:
     """Return the predicted policy"""
-    return actor_state.apply_fn(actor_params, obs)  # type: ignore[attr-defined]
+    policy = actor_state.apply_fn(actor_params, obs)
+    return policy  # type: ignore[attr-defined]

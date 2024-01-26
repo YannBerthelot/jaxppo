@@ -41,6 +41,7 @@ class PPOConfig(BaseModel):
     log_video_frequency: Optional[int] = None
     save_frequency: Optional[int] = None
     lstm_hidden_size: Optional[int] = None
+    continuous: bool = False
 
     @field_validator("env_id")
     @classmethod

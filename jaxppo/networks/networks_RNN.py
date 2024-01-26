@@ -36,6 +36,7 @@ class NetworkRNN(nn.Module):
     num_of_actions: Optional[int] = None
     multiple_envs: bool = True
     lstm_hidden_size: int = 64
+    continuous: bool = False
 
     @property
     def extractor_architecture(self) -> nn.Sequential:
@@ -60,6 +61,13 @@ class NetworkRNN(nn.Module):
                 kernel_init=orthogonal(0.01),
                 bias_init=constant(0.0),
             )(embedding)
+            if self.continuous:
+                actor_logtstd = self.param(
+                    "log_std",
+                    nn.initializers.zeros,
+                    self.num_of_actions,
+                )
+                return distrax.Normal(logits, jnp.exp(actor_logtstd)), extractor_hiddens
             return distrax.Categorical(logits=logits), extractor_hiddens
         val = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
             embedding
@@ -85,6 +93,7 @@ def init_networks(
     critic_architecture: Sequence[Union[str, ActivationFunction]],
     multiple_envs: bool = True,
     lstm_hidden_size: int = 64,
+    continuous: bool = False,
 ) -> Tuple[NetworkRNN, NetworkRNN]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
@@ -93,6 +102,7 @@ def init_networks(
         actor=True,
         num_of_actions=get_num_actions(env),
         lstm_hidden_size=lstm_hidden_size,
+        continuous=continuous,
     )
     critic = NetworkRNN(
         input_architecture=critic_architecture,

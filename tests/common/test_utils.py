@@ -53,3 +53,9 @@ def test_get_num_actions_gymnax():
     env, _, _ = make_gymnax_env("CartPole-v1", 42)
     num_actions = get_num_actions(env)
     assert num_actions == 2
+
+
+def test_get_num_actions_gymnax_continuous():
+    env, _, _ = make_gymnax_env("MountainCarContinuous-v0", 42)
+    num_actions = get_num_actions(env)
+    assert num_actions == 1

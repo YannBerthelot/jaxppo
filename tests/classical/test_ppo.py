@@ -60,7 +60,7 @@ def test_compute_gae():
 
 
 NUM_ENVS = 2
-NUM_STEPS = 2
+NUM_STEPS = 4
 TOTAL_TIMESTEPS = int(1e1)
 ARCHITECTURE = ["4", "tanh"]
 
@@ -150,6 +150,25 @@ def test_ppo_train_and_test():
     total_timesteps = TOTAL_TIMESTEPS
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
+    agent = PPO(
+        total_timesteps=total_timesteps,
+        num_steps=num_steps,
+        num_envs=num_envs,
+        env_id=env_id,
+        learning_rate=learning_rate,
+        actor_architecture=ARCHITECTURE,
+        critic_architecture=ARCHITECTURE,
+    )
+    agent.train(seed=42, test=True)
+
+
+def test_ppo_train_and_test_continuous():
+    """Test that the ppo train function doesn't fail"""
+    num_envs = NUM_ENVS
+    num_steps = NUM_STEPS
+    total_timesteps = TOTAL_TIMESTEPS
+    learning_rate = 2.5e-4
+    env_id = "MountainCarContinuous-v0"
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,

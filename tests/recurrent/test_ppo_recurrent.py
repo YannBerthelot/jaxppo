@@ -133,7 +133,7 @@ def test_ppo_train():
         actor_architecture=["4", "tanh"],
         critic_architecture=["4", "tanh"],
         lstm_hidden_size=2,
-        num_minibatches=8,
+        num_minibatches=num_envs,
     )
     agent.train(seed=42, test=False)
 

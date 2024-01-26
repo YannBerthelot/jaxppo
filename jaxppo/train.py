@@ -154,6 +154,7 @@ def init_agent(  # pylint: disable=W0102, R0913
     max_grad_norm: Optional[float],
     env_params: EnvParams,
     lstm_hidden_size: Optional[int] = None,
+    continuous: bool = False,
 ):
     """Initialize the networks, actor/critic states, and rng"""
     (
@@ -167,6 +168,7 @@ def init_agent(  # pylint: disable=W0102, R0913
         critic_architecture=critic_architecture,
         multiple_envs=num_envs > 1,
         lstm_hidden_size=lstm_hidden_size,
+        continuous=continuous,
     )
     if anneal_lr:
         scheduler = get_parameterized_schedule(
@@ -229,6 +231,7 @@ def make_train(  # pylint: disable=W0102, R0913
     video_log_frequency: Optional[int] = None,
     save_frequency: Optional[int] = None,
     lstm_hidden_size: Optional[int] = None,
+    continuous: bool = False,
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -305,8 +308,8 @@ def make_train(  # pylint: disable=W0102, R0913
             max_grad_norm,
             env_params,
             lstm_hidden_size=lstm_hidden_size,
+            continuous=continuous,
         )
-
         # INIT ENV
         rng, reset_key = jax.random.split(rng)
         reset_rng = jax.random.split(reset_key, num_envs)
@@ -395,7 +398,7 @@ def make_train(  # pylint: disable=W0102, R0913
 
                 # SELECT ACTION
 
-                pi, actor_hidden_state = get_pi(
+                pi, new_actor_hidden_state = get_pi(
                     runner_state.actor_state,
                     runner_state.actor_state.params,
                     (
@@ -407,7 +410,7 @@ def make_train(  # pylint: disable=W0102, R0913
                     runner_state.last_done[jnp.newaxis, :] if recurrent else None,
                     recurrent,
                 )
-                value, critic_hidden_state = predict_value(
+                value, new_critic_hidden_state = predict_value(
                     runner_state.critic_state,
                     runner_state.critic_state.params,
                     (
@@ -420,7 +423,17 @@ def make_train(  # pylint: disable=W0102, R0913
                     recurrent,
                 )
                 rng, action_key = jax.random.split(runner_state.rng)
-                action = pi.sample(seed=action_key)
+                # pi = runner_state.actor_state.apply_fn(
+                #     runner_state.actor_state.params, runner_state.last_obs
+                # )
+                if not recurrent:
+                    # action = pi.sample(seed=action_key).reshape(
+                    #     -1,
+                    # )
+                    action = pi.sample(seed=action_key)
+                else:
+                    action = pi.sample(seed=action_key)
+
                 log_prob = pi.log_prob(action)
                 if recurrent:
                     value, action, log_prob = (
@@ -450,8 +463,8 @@ def make_train(  # pylint: disable=W0102, R0913
                     env_state=env_state,
                     last_obs=obsv,
                     rng=rng,
-                    actor_hidden_state=actor_hidden_state,
-                    critic_hidden_state=critic_hidden_state,
+                    actor_hidden_state=new_actor_hidden_state,
+                    critic_hidden_state=new_critic_hidden_state,
                     last_done=done,
                 )
                 return runner_state, transition
@@ -655,23 +668,22 @@ def make_train(  # pylint: disable=W0102, R0913
                             traj_batch.done if recurrent else None,
                             recurrent,
                         )
+                        # pi = actor_state.apply_fn(actor_params, traj_batch.obs)
                         log_prob = pi.log_prob(traj_batch.action)
-
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - traj_batch.log_prob)
                         if advantage_normalization:
                             gae = (gae - gae.mean()) / (gae.std() + 1e-8)
-                        loss_actor1 = -ratio * gae
+                        loss_actor1 = ratio * gae
                         loss_actor2 = (
-                            -jnp.clip(
+                            jnp.clip(
                                 ratio,
                                 1.0 - clip_coef,
                                 1.0 + clip_coef,
                             )
                             * gae
                         )
-                        loss_actor = jnp.maximum(loss_actor1, loss_actor2).mean()
-
+                        loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         # CALCULATE AUXILIARIES
                         clip_fraction = (jnp.abs(ratio - 1) > clip_coef).mean()
                         entropy = pi.entropy().mean()
@@ -751,6 +763,7 @@ def make_train(  # pylint: disable=W0102, R0913
                     ), actor_grads = ppo_actor_loss_grad_function(
                         actor_state.params, actor_state, batch_info, advantages
                     )
+                    # jax.debug.breakpoint()
                     (critic_loss, (update_targets, values)), critic_grads = (
                         ppo_critic_loss_grad_function(
                             critic_state.params, critic_state, batch_info
@@ -861,6 +874,7 @@ def make_train(  # pylint: disable=W0102, R0913
                         )
                         rng, action_key = jax.random.split(rng)
                         action = pi.sample(seed=action_key)
+
                         if recurrent:
                             action = action.squeeze(0)[0]
                         # STEP ENV

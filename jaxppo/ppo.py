@@ -18,6 +18,7 @@ from jaxppo.train import init_agent, make_train
 from jaxppo.types_rnn import HiddenState
 from jaxppo.utils import load_model
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
+from jaxppo.wrappers import ClipAction, NormalizeVecObservation, NormalizeVecReward
 
 
 class PPO:
@@ -51,6 +52,7 @@ class PPO:
         save_frequency: Optional[int] = None,
         lstm_hidden_size: Optional[int] = None,
         seed: int = 42,
+        continuous: bool = False,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -106,12 +108,17 @@ class PPO:
             log_video_frequency=video_log_frequency,
             save_frequency=save_frequency,
             lstm_hidden_size=lstm_hidden_size,
+            continuous=continuous,
         )
         key = random.PRNGKey(seed)
         num_updates = total_timesteps // num_steps // num_envs
         if isinstance(env_id, str):
             env_id, env_params = gymnax.make(env_id)
         env = env_id
+        if continuous:
+            env = ClipAction(env, low=0.0, high=1.0)
+            env = NormalizeVecObservation(env)
+            env = NormalizeVecReward(env, gamma)
         (
             self._actor_state,
             self._critic_state,
@@ -131,6 +138,7 @@ class PPO:
             num_updates,
             max_grad_norm,
             env_params,
+            continuous=continuous,
         )
         self.recurrent = lstm_hidden_size is not None
 
@@ -187,6 +195,7 @@ class PPO:
             video_log_frequency=self.config.log_video_frequency,
             log_video=self.config.log_video,
             lstm_hidden_size=self.config.lstm_hidden_size,
+            continuous=self.config.continuous,
         )
 
         runner_state = train_jit(key)
@@ -198,6 +207,24 @@ class PPO:
             runner_state.actor_hidden_state,
             runner_state.critic_hidden_state,
         )
+        # mean, stddev = (
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [0.0]
+        #     ).distribution.mean(),
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [0.0]
+        #     ).distribution.stddev(),
+        # )
+        # jax.debug.print("mean={x} stddev={y}", x=mean, y=stddev)
+        # mean, stddev = (
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [1.0]
+        #     ).distribution.mean(),
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [1.0]
+        #     ).distribution.stddev(),
+        # )
+        # jax.debug.print("mean={x} stddev={y}", x=mean, y=stddev)
         if test:
             self.test(self.config.num_episode_test, seed=seed)
 
@@ -263,6 +290,7 @@ class PPO:
             )
 
         pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+
         pi, new_hidden = get_pi(
             self._actor_state,
             self._actor_state.params,
@@ -271,7 +299,33 @@ class PPO:
             done if self.recurrent else None,
             self.recurrent,
         )
-        return pi.sample(seed=key), new_hidden
+        action = pi.sample(seed=key)
+        return action, new_hidden
+
+    def get_action_distribution(
+        self,
+        obs: jax.Array,
+        hidden: Optional[HiddenState] = None,
+        done: Optional[bool] = None,
+    ) -> tuple[jax.Array, Optional[HiddenState]]:
+        """Returns a numpy action compliant with gym using the current \
+            state of the agent"""
+        if self._actor_state is None:
+            raise ValueError(
+                "Attempted to predict probs without an actor state/training the agent"
+                " first"
+            )
+
+        # pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+        pi, _ = get_pi(
+            self._actor_state,
+            self._actor_state.params,
+            obs[jnp.newaxis, :] if self.recurrent else obs,
+            hidden if self.recurrent else None,
+            done if self.recurrent else None,
+            self.recurrent,
+        )
+        return pi
 
     def test(self, n_episodes: int, seed: int):
         """Evaluate the agent over n_episodes (using seed for rng) and log the episodic\
@@ -335,8 +389,8 @@ if __name__ == "__main__":
 
     num_envs = 4
     num_steps = 2048
-    env_id = "CartPole-v1"
-    logging_config = LoggingConfig("Jax PPO", "test", config={})
+    env_id = "MountainCarContinuous-v0"
+    logging_config = LoggingConfig("Continuous PPO", "test", config={})
     init_logging(logging_config=logging_config)
     sb3_batch_size = 64
     agent = PPO(
@@ -350,7 +404,7 @@ if __name__ == "__main__":
         clip_coef=0.2,
         ent_coef=0.0,
         logging_config=logging_config,
-        total_timesteps=int(1e6),
+        total_timesteps=int(1e7),
         num_envs=num_envs,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
@@ -360,6 +414,7 @@ if __name__ == "__main__":
         save=True,
         log_video=True,
         video_log_frequency=None,
+        continuous=True,
         # lstm_hidden_size=16,
     )
 

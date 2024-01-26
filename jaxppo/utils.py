@@ -63,10 +63,13 @@ def get_num_actions(
 ) -> int:
     """Get the number of actions (discrete or continuous) in a gym env"""
     action_space = env.action_space()
+    # TODO : add continuous
     if isinstance(
         action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
     ):
         num_actions = int(action_space.n)
+    elif isinstance(action_space, (gym.spaces.Box, gymnax.environments.spaces.Box)):
+        num_actions = int(action_space.shape[0])
     else:
         action_shape = cast(
             Tuple[int], action_space.shape
