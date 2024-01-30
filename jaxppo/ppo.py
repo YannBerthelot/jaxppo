@@ -389,7 +389,7 @@ if __name__ == "__main__":
 
     num_envs = 4
     num_steps = 2048
-    env_id = "MountainCarContinuous-v0"
+    env_id = "Pendulum-v1"
     logging_config = LoggingConfig("Continuous PPO", "test", config={})
     init_logging(logging_config=logging_config)
     sb3_batch_size = 64
@@ -404,7 +404,7 @@ if __name__ == "__main__":
         clip_coef=0.2,
         ent_coef=0.0,
         logging_config=logging_config,
-        total_timesteps=int(1e7),
+        total_timesteps=int(1e6),
         num_envs=num_envs,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],

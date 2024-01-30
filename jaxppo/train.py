@@ -433,8 +433,8 @@ def make_train(  # pylint: disable=W0102, R0913
                     action = pi.sample(seed=action_key)
                 else:
                     action = pi.sample(seed=action_key)
-
                 log_prob = pi.log_prob(action)
+
                 if recurrent:
                     value, action, log_prob = (
                         value.squeeze(0),
@@ -505,7 +505,6 @@ def make_train(  # pylint: disable=W0102, R0913
             )
             if recurrent:
                 last_val = last_val.squeeze(0)
-
             advantages, targets = _calculate_gae(
                 traj_batch,
                 last_val,
@@ -669,11 +668,30 @@ def make_train(  # pylint: disable=W0102, R0913
                             recurrent,
                         )
                         # pi = actor_state.apply_fn(actor_params, traj_batch.obs)
-                        log_prob = pi.log_prob(traj_batch.action)
+                        log_prob = pi.log_prob(
+                            traj_batch.action.reshape(-1, 1)
+                            if continuous
+                            else traj_batch.action
+                        )
                         # CALCULATE ACTOR LOSS
                         ratio = jnp.exp(log_prob - traj_batch.log_prob)
                         if advantage_normalization:
                             gae = (gae - gae.mean()) / (gae.std() + 1e-8)
+                        if (num_envs > 1) and continuous:
+                            gae = gae.reshape(-1, 1)
+                        print(
+                            gae.shape,
+                            ratio.shape,
+                            log_prob.shape,
+                            traj_batch.log_prob.shape,
+                            traj_batch.action.shape,
+                        )
+                        assert (
+                            ratio.shape == (minibatch_size, 1)
+                            if continuous
+                            else (minibatch_size,)
+                        )
+                        assert ratio.shape == gae.shape
                         loss_actor1 = ratio * gae
                         loss_actor2 = (
                             jnp.clip(
@@ -683,6 +701,7 @@ def make_train(  # pylint: disable=W0102, R0913
                             )
                             * gae
                         )
+
                         loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
                         # CALCULATE AUXILIARIES
                         clip_fraction = (jnp.abs(ratio - 1) > clip_coef).mean()
@@ -763,7 +782,7 @@ def make_train(  # pylint: disable=W0102, R0913
                     ), actor_grads = ppo_actor_loss_grad_function(
                         actor_state.params, actor_state, batch_info, advantages
                     )
-                    # jax.debug.breakpoint()
+
                     (critic_loss, (update_targets, values)), critic_grads = (
                         ppo_critic_loss_grad_function(
                             critic_state.params, critic_state, batch_info

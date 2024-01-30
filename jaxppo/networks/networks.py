@@ -2,7 +2,6 @@ from functools import partial
 from typing import Callable, Optional, Sequence, TypeAlias, Union
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.core import FrozenDict
@@ -55,24 +54,6 @@ def predict_probs(
         jax.debug.callback(check_done_and_hidden, done, hidden)
         return predict_probs_rnn(actor_state, actor_params, hidden, obs, done)
     return predict_probs_classic(actor_state, actor_params, obs)
-
-
-@partial(jax.jit, static_argnames="recurrent")
-def predict_action_and_prob(
-    actor_state: TrainState,
-    actor_params: FrozenDict,
-    obs: np.ndarray,
-    key: jnp.array,
-    hidden: Optional[HiddenState] = None,
-    done: Optional[np.ndarray] = None,
-    recurrent: bool = False,
-) -> jax.Array:
-    """Return the predicted action logits of the given obs with the current actor state"""
-    if recurrent:
-        jax.debug.callback(check_done_and_hidden, done, hidden)
-        pass
-        # return predict_prob_rnn(actor_state, actor_params, hidden, obs, done, key)
-    return predict_prob_classic(actor_state, actor_params, obs, key)
 
 
 @partial(jax.jit, static_argnames="recurrent")

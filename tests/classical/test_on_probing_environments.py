@@ -310,7 +310,7 @@ def test_check_actor_and_critic_coupling_continuous():
         train_agent,
         get_action,
         get_value,
-        num_envs=1,
+        num_envs=2,
         learning_rate=LEARNING_RATE,
         budget=BUDGET,
         gymnax=True,
