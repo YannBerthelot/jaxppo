@@ -89,12 +89,12 @@ def test_critic_init(setup_simple_critic):
 
 
 def test_network_init():
-    env, _ = gymnax.make("CartPole-v1")
+    env, params = gymnax.make("CartPole-v1")
     num_actions = 2
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
     actor, critic = init_networks(
-        env, actor_architecture, critic_architecture, multiple_envs=False
+        env, params, actor_architecture, critic_architecture, multiple_envs=False
     )
     expected_actor = nn.Sequential([
         nn.Dense(32),
@@ -120,7 +120,7 @@ def test_predict_value():
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
     actor, critic = init_networks(
-        env, actor_architecture, critic_architecture, multiple_envs=False
+        env, env_params, actor_architecture, critic_architecture, multiple_envs=False
     )
 
     key = random.PRNGKey(42)
@@ -148,7 +148,7 @@ def test_predict_probs():
     actor_architecture = ["32", "tanh", "32", "tanh"]
     critic_architecture = ["32", "relu", "32", "relu"]
     actor, critic = init_networks(
-        env, actor_architecture, critic_architecture, multiple_envs=False
+        env, env_params, actor_architecture, critic_architecture, multiple_envs=False
     )
 
     key = random.PRNGKey(42)
@@ -169,4 +169,4 @@ def test_predict_probs():
         actor_state=actor_state, actor_params=actor_state.params, obs=obs
     )
     assert isinstance(probs, jax.Array)
-    assert len(probs) == get_num_actions(env)
+    assert len(probs) == get_num_actions(env, env_params)

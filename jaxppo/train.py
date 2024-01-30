@@ -164,6 +164,7 @@ def init_agent(  # pylint: disable=W0102, R0913
     ) = random.split(key, num=3)
     actor_network, critic_network = init_networks(
         env=env,
+        params=env_params,
         actor_architecture=actor_architecture,
         critic_architecture=critic_architecture,
         multiple_envs=num_envs > 1,

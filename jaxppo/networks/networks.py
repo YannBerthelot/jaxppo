@@ -147,6 +147,7 @@ def init_actor_and_critic_state(
 
 def init_networks(
     env: Environment,
+    params: EnvParams,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
     critic_architecture: Sequence[Union[str, ActivationFunction]],
     multiple_envs: bool,
@@ -156,6 +157,7 @@ def init_networks(
     if lstm_hidden_size is not None:
         return init_networks_rnn(
             env,
+            params,
             actor_architecture,
             critic_architecture,
             multiple_envs,
@@ -163,7 +165,7 @@ def init_networks(
             continuous,
         )
     return init_networks_classic(
-        env, actor_architecture, critic_architecture, multiple_envs, continuous
+        env, params, actor_architecture, critic_architecture, multiple_envs, continuous
     )
 
 

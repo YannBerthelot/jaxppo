@@ -142,6 +142,7 @@ class Network(nn.Module):
 
 def init_networks(
     env: Environment,
+    params: EnvParams,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
     critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
     multiple_envs: bool = True,
@@ -149,7 +150,7 @@ def init_networks(
 ) -> Tuple[Network, Network]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
-    num_actions = get_num_actions(env)
+    num_actions = get_num_actions(env, params)
     actor = Network(
         input_architecture=actor_architecture,
         actor=True,

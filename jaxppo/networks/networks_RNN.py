@@ -89,6 +89,7 @@ def init_hidden_state(
 
 def init_networks(
     env: Environment,
+    params: EnvParams,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
     critic_architecture: Sequence[Union[str, ActivationFunction]],
     multiple_envs: bool = True,
@@ -100,7 +101,7 @@ def init_networks(
     actor = NetworkRNN(
         input_architecture=actor_architecture,
         actor=True,
-        num_of_actions=get_num_actions(env),
+        num_of_actions=get_num_actions(env, params),
         lstm_hidden_size=lstm_hidden_size,
         continuous=continuous,
     )

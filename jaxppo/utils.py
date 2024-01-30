@@ -59,10 +59,10 @@ def sample_obs_space(
 
 
 def get_num_actions(
-    env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper, params: EnvParams
 ) -> int:
     """Get the number of actions (discrete or continuous) in a gym env"""
-    action_space = env.action_space()
+    action_space = env.action_space(params)
     # TODO : add continuous
     if isinstance(
         action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
