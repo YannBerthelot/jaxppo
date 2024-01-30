@@ -69,7 +69,7 @@ def get_num_actions(
     ):
         num_actions = int(action_space.n)
     elif isinstance(action_space, (gym.spaces.Box, gymnax.environments.spaces.Box)):
-        num_actions = int(action_space.shape[0])
+        num_actions = int(action_space.shape[0]) if len(action_space.shape) > 0 else 1
     else:
         action_shape = cast(
             Tuple[int], action_space.shape
