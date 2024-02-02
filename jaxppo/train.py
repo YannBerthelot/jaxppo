@@ -680,13 +680,6 @@ def make_train(  # pylint: disable=W0102, R0913
                             gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         if (num_envs > 1) and continuous:
                             gae = gae.reshape(-1, 1)
-                        print(
-                            gae.shape,
-                            ratio.shape,
-                            log_prob.shape,
-                            traj_batch.log_prob.shape,
-                            traj_batch.action.shape,
-                        )
                         assert (
                             ratio.shape == (minibatch_size, 1)
                             if continuous
@@ -929,6 +922,7 @@ def make_train(  # pylint: disable=W0102, R0913
                 #     jax.random.split(update_state.rng, num_eval_envs)
                 # )
                 eval_rewards = collect_rollout(update_state.rng)
+
                 metrics_to_log = {
                     f"episodic reward/reward-{ii}": reward
                     for ii, reward in enumerate(eval_rewards)
