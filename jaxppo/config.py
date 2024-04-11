@@ -1,4 +1,5 @@
 """Config for PPO agent"""
+
 import json
 from typing import Any, NoReturn, Optional, Sequence
 
@@ -33,21 +34,14 @@ class PPOConfig(BaseModel):
     num_episode_test: int = 20
     anneal_lr: bool = True
     max_grad_norm: Optional[float] = 0.5
-    shared_network: bool = False
-    vf_coef: Optional[float] = 0.5
     advantage_normalization: bool = True
-    lstm_hidden_size: int = 64
-
-    @field_validator("vf_coef")
-    @classmethod
-    def check_vf_coef(cls, vf_coef: float, info: Any) -> float:
-        """Check that value environment is a valid gymnax env id, gymnax env, or gymnax wrapped env"""
-        shared_network = info.data["shared_network"]
-        if shared_network and vf_coef is None:
-            raise ValueError(
-                "vf coef should be defined if using shared network, got {vf_coef}"
-            )
-        return vf_coef
+    save: bool = False
+    save_folder: str = "./models"
+    log_video: bool = False
+    log_video_frequency: Optional[int] = None
+    save_frequency: Optional[int] = None
+    lstm_hidden_size: Optional[int] = None
+    continuous: bool = False
 
     @field_validator("env_id")
     @classmethod

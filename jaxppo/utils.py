@@ -1,15 +1,22 @@
 """Helper functions for various modules"""
+
+import os
+import pickle
 from functools import partial
-from typing import Any, Callable, Tuple, cast
+from typing import Any, Callable, Optional, Tuple, cast
 
 import gymnasium as gym
 import gymnax
 import jax
+import jax.numpy as jnp
+from flax.serialization import from_state_dict, to_state_dict
+from flax.training.train_state import TrainState
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from gymnax import EnvParams
 from gymnax.environments.environment import Environment
 from jax import random
 
+from jaxppo.wandb_logging import log_model
 from jaxppo.wrappers import LogWrapper
 
 
@@ -52,14 +59,17 @@ def sample_obs_space(
 
 
 def get_num_actions(
-    env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper, params: EnvParams
 ) -> int:
     """Get the number of actions (discrete or continuous) in a gym env"""
-    action_space = env.action_space()
+    action_space = env.action_space(params)
+    # TODO : add continuous
     if isinstance(
         action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
     ):
         num_actions = int(action_space.n)
+    elif isinstance(action_space, (gym.spaces.Box, gymnax.environments.spaces.Box)):
+        num_actions = int(action_space.shape[0]) if len(action_space.shape) > 0 else 1
     else:
         action_shape = cast(
             Tuple[int], action_space.shape
@@ -102,15 +112,56 @@ def get_parameterized_schedule(
     return partial(linear_scheduler, **scheduler_kwargs)
 
 
-def make_gymnax_env(
-    env_id: str, seed: int
-) -> tuple[
+def make_gymnax_env(env_id: str, seed: int) -> tuple[
     Environment,
     EnvParams,
-    tuple[random.PRNGKeyArray, random.PRNGKeyArray, random.PRNGKeyArray],
+    tuple[jax.Array, jax.Array, jax.Array],
 ]:
     """Create a gymnax env and associated values for the given env id and seed"""
     rng = jax.random.PRNGKey(seed)
     rng, key_reset, key_policy, key_step = jax.random.split(rng, 4)
     env, env_params = gymnax.make(env_id)
     return env, env_params, (key_reset, key_policy, key_step)
+
+
+def save_model(
+    actor: TrainState,
+    critic: TrainState,
+    idx: int,
+    log: bool = True,
+    save_folder: str = "./models",
+):
+    """Save the actor and critic state to the specified folder. Log the model to wandb if selected."""
+    os.makedirs(save_folder, exist_ok=True)
+    path = os.path.join(save_folder, f"update_{idx}.pkl")
+    dict_to_save = {"actor": to_state_dict(actor), "critic": to_state_dict(critic)}
+    with open(path, "wb") as handle:
+        pickle.dump(dict_to_save, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    if log:
+        log_model(path, "actor_critic_model")
+
+
+def load_model(
+    path: str, actor: TrainState, critic: TrainState
+) -> tuple[TrainState, TrainState]:
+    """Load actor and critic state from the save file in path"""
+    with open(path, "rb") as handle:
+        actor_and_critic = pickle.load(handle)
+    return from_state_dict(actor, actor_and_critic["actor"]), from_state_dict(
+        critic, actor_and_critic["critic"]
+    )
+
+
+def check_update_frequency(
+    num_update: int, num_total_updates: int, frequency: Optional[int] = None
+) -> bool:
+    """Check wether or not to save according to the number of update.
+    It will be true when either the number of update is a multiple of save_frequency \\
+        or total number of updates has been reached"""
+    if frequency is not None:
+        cond = jnp.logical_or(
+            num_update == num_total_updates, num_update % (frequency - 1) == 0
+        )
+    else:
+        cond = num_update == num_total_updates
+    return cond
