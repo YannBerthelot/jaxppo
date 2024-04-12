@@ -1,4 +1,5 @@
 """Test utility functions for networks"""
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp

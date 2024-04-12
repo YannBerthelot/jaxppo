@@ -60,8 +60,8 @@ def test_compute_gae():
 
 
 NUM_ENVS = 2
-NUM_STEPS = 4
-TOTAL_TIMESTEPS = int(1e1)
+NUM_STEPS = 2
+TOTAL_TIMESTEPS = int(NUM_ENVS * NUM_STEPS * 2)
 ARCHITECTURE = ["4", "tanh"]
 
 

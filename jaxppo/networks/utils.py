@@ -1,4 +1,5 @@
 """Helpfer functions for Networks initialization"""
+
 import functools
 from typing import Optional, Sequence, TypeAlias, Union, cast, get_args
 

@@ -1,4 +1,5 @@
 """Test pydantic config"""
+
 import gymnax
 
 from jaxppo.config import PPOConfig

@@ -408,7 +408,7 @@ def make_train(  # pylint: disable=W0102, R0913
                         else runner_state.last_obs
                     ),
                     runner_state.critic_hidden_state if recurrent else None,
-                    runner_state.last_done[jnp.newaxis, :] if recurrent else None,
+                    runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
                     recurrent,
                 )
                 value, new_critic_hidden_state = predict_value(
@@ -420,7 +420,7 @@ def make_train(  # pylint: disable=W0102, R0913
                         else runner_state.last_obs
                     ),
                     runner_state.critic_hidden_state if recurrent else None,
-                    runner_state.last_done[jnp.newaxis, :] if recurrent else None,
+                    runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
                     recurrent,
                 )
                 rng, action_key = jax.random.split(runner_state.rng)
@@ -501,7 +501,7 @@ def make_train(  # pylint: disable=W0102, R0913
                     else runner_state.last_obs
                 ),
                 runner_state.critic_hidden_state if recurrent else None,
-                runner_state.last_done[jnp.newaxis, :] if recurrent else None,
+                runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
                 recurrent,
             )
             if recurrent:
@@ -518,10 +518,7 @@ def make_train(  # pylint: disable=W0102, R0913
             def _update_epoch_pre_partial(  # pylint: disable=R0913, R0914
                 update_state: UpdateState,
                 _: Any,
-            ) -> tuple[
-                UpdateState,
-                tuple[jax.Array, jax.Array, jax.Array, jax.Array],
-            ]:
+            ) -> tuple[UpdateState, tuple[jax.Array, jax.Array, jax.Array, jax.Array],]:
                 """
                 Update the actor and critic states over an epoch of num_minibatches minibatches.\
                     Collect losses for logging.
@@ -580,7 +577,7 @@ def make_train(  # pylint: disable=W0102, R0913
                         shuffled_batch,
                     )
                 else:
-                    batch = (
+                    batch = (  # type: ignore[assignment]
                         update_state.traj_batch,
                         update_state.advantages,
                         update_state.targets,
@@ -601,10 +598,7 @@ def make_train(  # pylint: disable=W0102, R0913
                 def _update_minbatch_pre_partial(  # pylint: disable=R0914
                     train_state: tuple[TrainState, TrainState],
                     batch_info: tuple[Transition, jax.Array, jax.Array],
-                ) -> tuple[
-                    tuple[TrainState, TrainState],
-                    tuple[jax.Array, ...],
-                ]:
+                ) -> tuple[tuple[TrainState, TrainState], tuple[jax.Array, ...],]:
                     """
                     Update the actor and critic state over a minibatch of trajectories.
 
@@ -624,11 +618,9 @@ def make_train(  # pylint: disable=W0102, R0913
                             The updated actor and critic states, and the losses values for logging.
                     """
                     if recurrent:
-                        assert len(batch_info) == 5
-                        _, advantages, _, _, _ = batch_info
+                        _, advantages, _, _, _ = batch_info  # type: ignore[misc]
                     else:
-                        assert len(batch_info) == 3
-                        _, advantages, _ = batch_info
+                        _, advantages, _ = batch_info  # type: ignore[misc]
 
                     actor_state, critic_state = train_state
 
@@ -656,9 +648,9 @@ def make_train(  # pylint: disable=W0102, R0913
                                 the sub-losses for logging
                         """
                         if recurrent:
-                            traj_batch, _, _, actor_hidden_state, _ = batch_info
+                            traj_batch, _, _, actor_hidden_state, _ = batch_info  # type: ignore[misc]
                         else:
-                            traj_batch, _, _ = batch_info
+                            traj_batch, _, _ = batch_info  # type: ignore[misc]
                         # RERUN NETWORK
                         pi, _ = get_pi(
                             actor_state,
@@ -732,9 +724,9 @@ def make_train(  # pylint: disable=W0102, R0913
                             jax.Array: The critic/value loss.
                         """
                         if recurrent:
-                            traj_batch, _, targets, _, critic_hidden_state = batch_info
+                            traj_batch, _, targets, _, critic_hidden_state = batch_info  # type: ignore[misc]
                         else:
-                            traj_batch, _, targets = batch_info
+                            traj_batch, _, targets = batch_info  # type: ignore[misc]
                         # RERUN NETWORK
                         value, _ = predict_value(
                             critic_state,
@@ -824,8 +816,8 @@ def make_train(  # pylint: disable=W0102, R0913
 
             if recurrent:
                 initial_actor_hidden_state, initial_critic_hidden_state = (
-                    initial_actor_hidden_state[None, :],
-                    initial_critic_hidden_state[None, :],
+                    initial_actor_hidden_state[None, :],  # type: ignore[index]
+                    initial_critic_hidden_state[None, :],  # type: ignore[index]
                 )
             update_state = UpdateState(
                 actor_state=runner_state.actor_state,

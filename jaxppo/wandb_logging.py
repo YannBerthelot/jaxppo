@@ -44,9 +44,9 @@ def wandb_log(info, metrics, num_envs):
         info["returned_episode"]
     ]  # get episodes that have finished
     timestep = jnp.max(info["timestep"]) * num_envs
-    wandb.log({
-        "Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep
-    })
+    wandb.log(
+        {"Train/mean_returns_over_batch": jnp.mean(return_values), "timestep": timestep}
+    )
     (
         actor_loss,
         critic_loss,

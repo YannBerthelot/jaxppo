@@ -157,6 +157,7 @@ BUDGET = 2e3
 NUM_ENVS = 4
 
 
+@pytest.mark.slow
 def test_check_check_loss_or_optimizer_value_net():
     """
     Test that check_backprop_value_net works on failproof sb3.
@@ -173,6 +174,7 @@ def test_check_check_loss_or_optimizer_value_net():
     )
 
 
+@pytest.mark.slow
 def test_check_backprop_value_net():
     """
     Test that check_backprop_value_net works on failproof sb3.
@@ -189,6 +191,7 @@ def test_check_backprop_value_net():
     )
 
 
+@pytest.mark.slow
 def test_check_reward_discounting():
     """
     Test that check_reward_discounting works on failproof sb3.
@@ -206,6 +209,7 @@ def test_check_reward_discounting():
     )
 
 
+@pytest.mark.slow
 def test_check_advantage_policy():
     """
     Test that check_advantage_policy works on failproof sb3.
@@ -222,6 +226,7 @@ def test_check_advantage_policy():
     )
 
 
+@pytest.mark.slow
 def test_check_actor_and_critic_coupling():
     """
     Test that check_actor_and_critic_coupling works on failproof sb3.
@@ -254,6 +259,7 @@ def compute_next_critic_hidden(
     return agent.predict_value(obs, hidden, done)[1]
 
 
+@pytest.mark.slow
 def test_check_recurrent_agent():
     """
     Test that check_actor_and_critic_coupling works on failproof sb3.
@@ -338,6 +344,7 @@ def classical_compute_next_critic_hidden(
     return None
 
 
+@pytest.mark.slow
 def test_check_non_recurrent_agent_fails():
     """
     Test that check_actor_and_critic_coupling works on failproof sb3.

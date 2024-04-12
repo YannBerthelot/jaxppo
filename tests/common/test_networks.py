@@ -65,26 +65,30 @@ def test_actor_init(setup_simple_actor):
     """Check that the network architectures matches the requested architecture"""
     num_actions = 2
     actor = setup_simple_actor
-    expected_actor = nn.Sequential([
-        nn.Dense(64),
-        nn.tanh,
-        nn.Dense(32),
-        nn.relu,
-        nn.Dense(num_actions),
-    ])
+    expected_actor = nn.Sequential(
+        [
+            nn.Dense(64),
+            nn.tanh,
+            nn.Dense(32),
+            nn.relu,
+            nn.Dense(num_actions),
+        ]
+    )
     check_nn_is_equal(actor.architecture.layers, expected_actor.layers)
 
 
 def test_critic_init(setup_simple_critic):
     """Check that the network architectures matches the requested architecture"""
     critic = setup_simple_critic
-    expected_critic = nn.Sequential([
-        nn.Dense(64),
-        nn.tanh,
-        nn.Dense(32),
-        nn.relu,
-        nn.Dense(1),
-    ])
+    expected_critic = nn.Sequential(
+        [
+            nn.Dense(64),
+            nn.tanh,
+            nn.Dense(32),
+            nn.relu,
+            nn.Dense(1),
+        ]
+    )
     check_nn_is_equal(critic.architecture.layers, expected_critic.layers)
 
 
@@ -96,22 +100,26 @@ def test_network_init():
     actor, critic = init_networks(
         env, params, actor_architecture, critic_architecture, multiple_envs=False
     )
-    expected_actor = nn.Sequential([
-        nn.Dense(32),
-        nn.tanh,
-        nn.Dense(32),
-        nn.tanh,
-        nn.Dense(num_actions),
-    ])
+    expected_actor = nn.Sequential(
+        [
+            nn.Dense(32),
+            nn.tanh,
+            nn.Dense(32),
+            nn.tanh,
+            nn.Dense(num_actions),
+        ]
+    )
     check_nn_is_equal(actor.architecture.layers, expected_actor.layers)
 
-    expected_critic = nn.Sequential([
-        nn.Dense(32),
-        nn.relu,
-        nn.Dense(32),
-        nn.relu,
-        nn.Dense(1),
-    ])
+    expected_critic = nn.Sequential(
+        [
+            nn.Dense(32),
+            nn.relu,
+            nn.Dense(32),
+            nn.relu,
+            nn.Dense(1),
+        ]
+    )
     check_nn_is_equal(critic.architecture.layers, expected_critic.layers)
 
 

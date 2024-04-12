@@ -176,8 +176,10 @@ if __name__ == "__main__":
     # )
 
     df = pd.read_csv(
-        "/Users/yann/Documents/jaxppo/csv_data/jax delayed delay=10/jax delayed"
-        " delay=10.csv",
+        (
+            "/Users/yann/Documents/jaxppo/csv_data/jax delayed delay=10/jax delayed"
+            " delay=10.csv"
+        ),
         index_col=0,
     )
 

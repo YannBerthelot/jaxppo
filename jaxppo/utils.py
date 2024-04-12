@@ -112,11 +112,9 @@ def get_parameterized_schedule(
     return partial(linear_scheduler, **scheduler_kwargs)
 
 
-def make_gymnax_env(env_id: str, seed: int) -> tuple[
-    Environment,
-    EnvParams,
-    tuple[jax.Array, jax.Array, jax.Array],
-]:
+def make_gymnax_env(
+    env_id: str, seed: int
+) -> tuple[Environment, EnvParams, tuple[jax.Array, jax.Array, jax.Array],]:
     """Create a gymnax env and associated values for the given env id and seed"""
     rng = jax.random.PRNGKey(seed)
     rng, key_reset, key_policy, key_step = jax.random.split(rng, 4)

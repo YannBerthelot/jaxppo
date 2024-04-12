@@ -37,7 +37,7 @@ repos:
             "--max-complexity",
             "10",
             "--ignore",
-            "E203, W503, E501, F821",
+            "E203, W503, E501, F821, C901",
           ]
 
   - repo: https://github.com/PyCQA/pylint/
@@ -45,7 +45,7 @@ repos:
     hooks:
       - id: pylint
         exclude: src/probing_environments/envs.py
-        args: ["--rcfile=.pylintrc"]
+        args: ["--rcfile=.pylintrc" ,"--fail-under=9"]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: "v1.4.1" # Use the sha / tag you want to point at

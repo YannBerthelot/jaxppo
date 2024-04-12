@@ -1,4 +1,5 @@
 """Sanity checks on the behavior of gymnax"""
+
 import gymnasium
 import gymnax
 import jax

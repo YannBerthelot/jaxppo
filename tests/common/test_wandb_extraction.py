@@ -1,4 +1,5 @@
 """Tests for wandb extractions of multiple runs from a single merged-run"""
+
 import os
 from typing import Any
 
@@ -34,7 +35,7 @@ def get_fake_run(run_id):
     return api.run(f"{os.environ['WANDB_ENTITY']}/{PROJECT}/{run_id}")
 
 
-def create_fake_run():
+def create_fake_run_and_get_run_and_id():
     """Create a fake run and upload it to W&B"""
     run_id = wandb.util.generate_id()
     run = wandb.init(
@@ -45,6 +46,12 @@ def create_fake_run():
         mode="online",
         id=run_id,
     )
+    return run, run_id
+
+
+def create_fake_run():
+    """Create a fake run and upload it to W&B"""
+    run, run_id = create_fake_run_and_get_run_and_id()
 
     def run_loop(value) -> None:
         """Log value onto W&B for 10 timesteps"""

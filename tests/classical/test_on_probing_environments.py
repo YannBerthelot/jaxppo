@@ -10,6 +10,7 @@ from typing import Any, List, Optional
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from flax import struct
 from gymnax.environments.environment import Environment
 from probing_environments.checks import (
@@ -218,6 +219,7 @@ LEARNING_RATE = 1e-3
 BUDGET = 2e3
 
 
+@pytest.mark.slow
 def test_check_check_loss_or_optimizer_value_net_2_env():
     """
     Test that check_backprop_value_net works on failproof sb3.
@@ -234,6 +236,7 @@ def test_check_check_loss_or_optimizer_value_net_2_env():
     )
 
 
+@pytest.mark.slow
 def test_check_backprop_value_net_2_env():
     """
     Test that check_backprop_value_net works on failproof sb3.
@@ -250,6 +253,7 @@ def test_check_backprop_value_net_2_env():
     )
 
 
+@pytest.mark.slow
 def test_check_reward_discounting_2_envs():
     """
     Test that check_reward_discounting works on failproof sb3.
@@ -267,6 +271,7 @@ def test_check_reward_discounting_2_envs():
     )
 
 
+@pytest.mark.slow
 def test_check_advantage_policy():
     """
     Test that check_advantage_policy works on failproof sb3.
@@ -283,6 +288,7 @@ def test_check_advantage_policy():
     )
 
 
+@pytest.mark.slow
 def test_check_actor_and_critic_coupling_2_envs():
     """
     Test that check_actor_and_critic_coupling works on failproof sb3.
@@ -300,6 +306,7 @@ def test_check_actor_and_critic_coupling_2_envs():
     )
 
 
+@pytest.mark.slow
 def test_check_actor_and_critic_coupling_continuous():
     """
     Test that check_actor_and_critic_coupling works on failproof sb3.
@@ -318,6 +325,7 @@ def test_check_actor_and_critic_coupling_continuous():
     )
 
 
+@pytest.mark.slow
 def test_check_advantage_policy_continuous():
     """
     Test that check_advantage_policy works on failproof sb3.

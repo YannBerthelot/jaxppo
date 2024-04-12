@@ -90,32 +90,38 @@ class Network(nn.Module):
             )
         if self.actor:
             if self.continuous:
-                return nn.Sequential([
+                return nn.Sequential(
+                    [
+                        *parse_architecture(self.input_architecture),
+                        nn.Dense(
+                            self.num_of_actions,
+                            kernel_init=orthogonal(0.01),
+                            bias_init=constant(0.0),
+                        ),
+                    ]
+                )
+            return nn.Sequential(
+                [
                     *parse_architecture(self.input_architecture),
                     nn.Dense(
                         self.num_of_actions,
                         kernel_init=orthogonal(0.01),
                         bias_init=constant(0.0),
                     ),
-                ])
-            return nn.Sequential([
-                *parse_architecture(self.input_architecture),
-                nn.Dense(
-                    self.num_of_actions,
-                    kernel_init=orthogonal(0.01),
-                    bias_init=constant(0.0),
-                ),
-                distrax.Categorical,
-            ])
+                    distrax.Categorical,
+                ]
+            )
         else:
-            return nn.Sequential([
-                *parse_architecture(self.input_architecture),
-                nn.Dense(
-                    1,
-                    kernel_init=orthogonal(1.0),
-                    bias_init=constant(0.0),
-                ),
-            ])
+            return nn.Sequential(
+                [
+                    *parse_architecture(self.input_architecture),
+                    nn.Dense(
+                        1,
+                        kernel_init=orthogonal(1.0),
+                        bias_init=constant(0.0),
+                    ),
+                ]
+            )
 
     @nn.compact
     def __call__(self, x: Array):
