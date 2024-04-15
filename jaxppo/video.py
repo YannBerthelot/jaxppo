@@ -4,10 +4,10 @@ import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
+import wandb
 from gymnax import EnvParams
 from gymnax.environments.environment import Environment
 
-import wandb
 from jaxppo.networks.networks import get_pi
 from jaxppo.networks.networks_RNN import init_hidden_state
 

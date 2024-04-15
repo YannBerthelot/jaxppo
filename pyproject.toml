@@ -42,7 +42,7 @@ moviepy = "^1.0.3"
 
 [[tool.poetry.source]]
 name = "pypi"
-priority = "default"
+priority = "primary"
 
 
 [[tool.poetry.source]]
@@ -57,7 +57,8 @@ verbose = true
 
 [tool.isort]
 profile = "black"
-src_paths = ["isort", "tests", "jaxppo"]
+src_paths = ["tests", "jaxppo"]
+known_third_party="wandb"
 
 [tool.flake8]
 max-line-length = 88

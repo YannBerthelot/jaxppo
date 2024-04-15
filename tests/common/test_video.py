@@ -1,6 +1,7 @@
 import gymnax
 import jax
 import pytest
+import wandb
 from test_wandb_extraction import (
     create_fake_run_and_get_run_and_id,
     destroy_fake_run,
@@ -8,7 +9,6 @@ from test_wandb_extraction import (
     setup_wandb_user,
 )
 
-import wandb
 from jaxppo.train import UpdateState, init_agent
 from jaxppo.video import save_video_to_wandb
 

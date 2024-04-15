@@ -9,9 +9,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import wandb
 from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
 
-import wandb
 from jaxppo.ppo import PPO
 from jaxppo.train import Transition, _calculate_gae, make_train
 from jaxppo.wandb_logging import LoggingConfig

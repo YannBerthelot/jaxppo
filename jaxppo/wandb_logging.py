@@ -6,7 +6,6 @@ from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
-
 import wandb
 
 os.environ["WANDB_SILENT"] = "false"
@@ -24,7 +23,10 @@ class LoggingConfig:
     group_name: Optional[str] = None
 
 
-def init_logging(logging_config: LoggingConfig):
+def init_logging(
+    logging_config: LoggingConfig,
+    folder: Optional[str] = None,
+):
     """Init the wandb run with the logging config"""
 
     wandb.init(
@@ -35,6 +37,7 @@ def init_logging(logging_config: LoggingConfig):
         monitor_gym=False,
         config=logging_config.config,
         mode=logging_config.mode,
+        dir=folder,
     )
 
 
