@@ -6,37 +6,44 @@ authors = ["Yann Berthelot <yannberthelot1@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.10, <3.13"
 gymnasium = "^0.28.1"
 numpy = "^1.25.0"
-tensorflow-probability = "^0.20.1"
 tqdm = "^4.65.0"
-jax = "^0.4.13"
-jaxlib = "^0.4.13"
-flax = "^0.7.0"
-chex = "0.1.81"
 gymnax = "^0.0.6"
 appdirs = "1.4.3"
-wandb = "^0.15.5"
-distrax = "^0.1.4"
 pydantic = "^2.0.2"
 probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git", rev = "gymnax"}
+wandb = "^0.15.8"
+pandas = "^2.1.1"
+matplotlib = "^3.8.0"
+jaxlib = "0.4.20"
+jax = "0.4.20"
+distrax = "^0.1.5"
+flax = "^0.7.5"
+scipy = "<1.13"
 
 
 [tool.poetry.group.dev.dependencies]
-isort = "^5.12.0"
-black = "^23.3.0"
+black = "23.3.0"
 flake8 = "^6.0.0"
 mypy = "^1.4.1"
-coverage = "^7.2.7"
 pre-commit = "^3.3.3"
 pytest = "7.4.0"
 probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git", rev = "gymnax"}
 tox = "^4.6.4"
+coverage = {extras = ["toml"], version = "^7.4.4"}
+pygame = "^2.5.2"
+isort = "^5.13.2"
+
+
+[tool.poetry.group.render.dependencies]
+moviepy = "^1.0.3"
 
 [[tool.poetry.source]]
-name = "PyPI"
-priority = "primary"
+name = "pypi"
+priority = "default"
+
 
 [[tool.poetry.source]]
 name = "testpypi"
@@ -57,13 +64,40 @@ max-line-length = 88
 
 [tool.mypy]
 disable_error_code = "attr-defined"
+ignore_missing_imports = true
+
+
+[tool.pytest.ini_options]
+norecursedirs = ["tests/classical/*", "tests/recurrent/*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+omit = [ "tests/*" , "jaxppo/wrappers.py"]
+ignore_errors = true    
+
+exclude_also = [
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    ]
 
 [tool.tox]
 legacy_tox_ini = """
 
+
+
 [tox]
 isolated_build = True
-envlist = py311,linting,coverage
+envlist = testenv,linting,coverage
 
 [testenv]
 skip_install = true
@@ -76,13 +110,13 @@ changedir = {envtmpdir}
 commands = poetry run pytest {toxinidir}
 
 [testenv:linting]
-deps = pre-commit
 commands = pre-commit run --all-files
 
 
 [testenv:coverage]
+
 commands = 
-    poetry run coverage run --source=jaxppo --branch -m pytest {toxinidir}
+    poetry run coverage run -m pytest tests
     poetry run coverage report -m --fail-under 80
     poetry run coverage xml -o {toxinidir}/coverage.xml
 

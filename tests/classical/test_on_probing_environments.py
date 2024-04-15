@@ -1,17 +1,23 @@
 """
 Premade connectors for stable-baselines3
 """
+
 from functools import partial
 
 # pylint: disable=W0613
 from typing import Any, List, Optional
 
+import jax
+import jax.numpy as jnp
 import numpy as np
+import pytest
 from flax import struct
 from gymnax.environments.environment import Environment
 from probing_environments.checks import (
     check_actor_and_critic_coupling,
+    check_actor_and_critic_coupling_continuous,
     check_advantage_policy,
+    check_advantage_policy_continuous,
     check_backprop_value_net,
     check_loss_or_optimizer_value_net,
     check_reward_discounting,
@@ -37,6 +43,7 @@ def init_agent(
     num_envs: int = 1,
     seed: Optional[int] = 42,  # pylint: disable=W0613
     budget: int = int(1e3),
+    continuous: bool = False,
 ) -> AgentType:
     """
     Initialize your agent on a given env while also setting the discount factor.
@@ -62,6 +69,49 @@ def init_agent(
         env_params=env_params,
         gamma=gamma,
         learning_rate=learning_rate,
+        continuous=continuous,
+    )
+    return agent
+
+
+def init_agent_continuous(
+    agent: AgentType,
+    env: Environment,
+    run_name: str,  # pylint: disable=W0613
+    gamma: float = 0.5,
+    learning_rate: float = 1e-3,
+    num_envs: int = 1,
+    seed: Optional[int] = 42,  # pylint: disable=W0613
+    budget: int = int(1e3),
+    continuous: bool = False,
+) -> AgentType:
+    """
+    Initialize your agent on a given env while also setting the discount factor.
+
+    Args:
+        agent (AgentType) : The agent to be used
+        env (gym.Env): The env to use with your agent.
+        gamma (float, optional): The discount factor to use. Defaults to 0.5.
+
+    Raises:
+        NotImplementedError: While you haven't implemented your own functions or picked\
+              from the existing ones
+
+    Returns:
+        AgentType: Your agent with the right settings.
+    """
+    env_params = EnvParams()
+    num_steps = 16
+    agent = PPO(
+        total_timesteps=budget,
+        num_envs=num_envs,
+        num_steps=num_steps,
+        env_id=env(),
+        env_params=env_params,
+        gamma=gamma,
+        learning_rate=learning_rate,
+        ent_coef=0.0,
+        continuous=True,
     )
     return agent
 
@@ -104,7 +154,7 @@ def get_value(agent: PPO, obs: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: The predicted value of the given observation.
     """
-    return agent.predict_value(obs)
+    return agent.predict_value(obs)[0]
 
 
 def get_policy(agent: PPO, obs: np.ndarray) -> List[float]:
@@ -124,6 +174,27 @@ def get_policy(agent: PPO, obs: np.ndarray) -> List[float]:
         List[float]: The probabilities of taking every actions.
     """
     return agent.predict_probs(obs)
+
+
+def get_action(agent: PPO, obs: np.ndarray, key: jax.Array) -> float:
+    """
+    Predict the (continuous) action using\
+          your current policy net.
+
+    Args:
+        agent (AgentType): Your agent to make the prediction.
+        obs (np.ndarray): The observation to make the prediction on.
+
+    Raises:
+        NotImplementedError: While you haven't implemented your own functions or picked\
+              from the existing ones
+
+    Returns:
+        float: The action
+    """
+
+    action = agent.get_action(jnp.array(obs), key)[0][0]
+    return action
 
 
 def get_gamma(agent: PPO) -> float:
@@ -148,6 +219,7 @@ LEARNING_RATE = 1e-3
 BUDGET = 2e3
 
 
+@pytest.mark.slow
 def test_check_check_loss_or_optimizer_value_net_2_env():
     """
     Test that check_backprop_value_net works on failproof sb3.
@@ -164,6 +236,7 @@ def test_check_check_loss_or_optimizer_value_net_2_env():
     )
 
 
+@pytest.mark.slow
 def test_check_backprop_value_net_2_env():
     """
     Test that check_backprop_value_net works on failproof sb3.
@@ -180,6 +253,7 @@ def test_check_backprop_value_net_2_env():
     )
 
 
+@pytest.mark.slow
 def test_check_reward_discounting_2_envs():
     """
     Test that check_reward_discounting works on failproof sb3.
@@ -197,6 +271,7 @@ def test_check_reward_discounting_2_envs():
     )
 
 
+@pytest.mark.slow
 def test_check_advantage_policy():
     """
     Test that check_advantage_policy works on failproof sb3.
@@ -213,6 +288,7 @@ def test_check_advantage_policy():
     )
 
 
+@pytest.mark.slow
 def test_check_actor_and_critic_coupling_2_envs():
     """
     Test that check_actor_and_critic_coupling works on failproof sb3.
@@ -227,4 +303,40 @@ def test_check_actor_and_critic_coupling_2_envs():
         learning_rate=LEARNING_RATE,
         budget=BUDGET * 2,
         gymnax=True,
+    )
+
+
+@pytest.mark.slow
+def test_check_actor_and_critic_coupling_continuous():
+    """
+    Test that check_actor_and_critic_coupling works on failproof sb3.
+    """
+    check_actor_and_critic_coupling_continuous(
+        AGENT,
+        init_agent_continuous,
+        train_agent,
+        get_action,
+        get_value,
+        num_envs=2,
+        learning_rate=LEARNING_RATE,
+        budget=BUDGET,
+        gymnax=True,
+        key=jax.random.PRNGKey(42),
+    )
+
+
+@pytest.mark.slow
+def test_check_advantage_policy_continuous():
+    """
+    Test that check_advantage_policy works on failproof sb3.
+    """
+    check_advantage_policy_continuous(
+        AGENT,
+        init_agent_continuous,
+        train_agent,
+        get_action,
+        learning_rate=LEARNING_RATE,
+        budget=BUDGET,
+        gymnax=True,
+        key=jax.random.PRNGKey(42),
     )

@@ -1,4 +1,5 @@
 """Networks initialization"""
+
 from typing import Callable, Optional, Sequence, Tuple, TypeAlias, Union, cast, get_args
 
 import distrax
@@ -12,7 +13,7 @@ from flax.core import FrozenDict
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from gymnax.environments.environment import Environment, EnvParams
-from jax import Array, random
+from jax import Array
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
 
@@ -74,8 +75,8 @@ class Network(nn.Module):
     input_architecture: Sequence[Union[str, ActivationFunction]]
     actor: bool
     num_of_actions: Optional[int] = None
-    shared_network: bool = False
     multiple_envs: bool = True
+    continuous: bool = False
 
     @property
     def architecture(self) -> nn.Sequential:
@@ -87,12 +88,8 @@ class Network(nn.Module):
                 "Got unexpected num of actions :"
                 f" {self.num_of_actions} {type(self.num_of_actions)}"
             )
-        if self.shared_network:
-            return nn.Sequential(
-                [*parse_architecture(self.input_architecture)],
-            )
-        else:
-            if self.actor:
+        if self.actor:
+            if self.continuous:
                 return nn.Sequential(
                     [
                         *parse_architecture(self.input_architecture),
@@ -101,27 +98,11 @@ class Network(nn.Module):
                             kernel_init=orthogonal(0.01),
                             bias_init=constant(0.0),
                         ),
-                        distrax.Categorical,
                     ]
                 )
-            else:
-                return nn.Sequential(
-                    [
-                        *parse_architecture(self.input_architecture),
-                        nn.Dense(
-                            1,
-                            kernel_init=orthogonal(1.0),
-                            bias_init=constant(0.0),
-                        ),
-                    ]
-                )
-
-    @nn.compact
-    def __call__(self, x: Array):
-        if self.shared_network:
-            feature_extractor = self.architecture(x)
-            pi = nn.Sequential(
+            return nn.Sequential(
                 [
+                    *parse_architecture(self.input_architecture),
                     nn.Dense(
                         self.num_of_actions,
                         kernel_init=orthogonal(0.01),
@@ -129,46 +110,58 @@ class Network(nn.Module):
                     ),
                     distrax.Categorical,
                 ]
-            )(feature_extractor)
-            feature_extractor = self.architecture(x)
-            val = nn.Dense(
-                1,
-                kernel_init=orthogonal(1.0),
-                bias_init=constant(0.0),
-            )(feature_extractor)
-            return pi, val.squeeze()
-        else:
-            if self.actor:
-                return self.architecture(x)
-            return (
-                self.architecture(x).squeeze()
-                if self.multiple_envs
-                else self.architecture(x)
             )
+        else:
+            return nn.Sequential(
+                [
+                    *parse_architecture(self.input_architecture),
+                    nn.Dense(
+                        1,
+                        kernel_init=orthogonal(1.0),
+                        bias_init=constant(0.0),
+                    ),
+                ]
+            )
+
+    @nn.compact
+    def __call__(self, x: Array):
+        if self.actor:
+            if self.continuous:
+                actor_mean = self.architecture(x)
+                actor_logtstd = self.param(
+                    "log_std",
+                    nn.initializers.zeros,
+                    self.num_of_actions,
+                )
+                return distrax.Normal(actor_mean, jnp.exp(actor_logtstd))
+                # return distrax.ClippedNormal(
+                #     actor_mean, jnp.exp(actor_logtstd), minimum=-1, maximum=1
+                # )
+
+            return self.architecture(x)
+        return (
+            self.architecture(x).squeeze()
+            if self.multiple_envs
+            else self.architecture(x)
+        )
 
 
 def init_networks(
     env: Environment,
+    params: EnvParams,
     actor_architecture: Sequence[Union[str, ActivationFunction]],
     critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
-    shared_network: bool = False,
     multiple_envs: bool = True,
-) -> Tuple[Network, Optional[Network]]:
+    continuous: bool = False,
+) -> Tuple[Network, Network]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
-    num_actions = get_num_actions(env)
-    if shared_network:
-        network = Network(
-            input_architecture=actor_architecture,
-            actor=True,
-            num_of_actions=num_actions,
-            shared_network=True,
-        )
-        return network, None
+    num_actions = get_num_actions(env, params)
     actor = Network(
         input_architecture=actor_architecture,
         actor=True,
         num_of_actions=num_actions,
+        continuous=continuous,
     )
     critic = Network(
         input_architecture=critic_architecture, actor=False, multiple_envs=multiple_envs
@@ -197,30 +190,14 @@ def init_actor_and_critic_state(
     env: Environment,
     env_params: EnvParams,
     actor_network: Network,
-    actor_key: random.PRNGKeyArray,
+    actor_key: jax.Array,
     actor_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
-    critic_tx: Optional[
-        Union[GradientTransformationExtraArgs, GradientTransformation]
-    ] = None,
-    critic_network: Optional[Network] = None,
-    critic_key: Optional[random.PRNGKeyArray] = None,
-    shared_network: bool = False,
+    critic_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
+    critic_network: Network,
+    critic_key: Optional[jax.Array] = None,
 ) -> Tuple[TrainState, Optional[TrainState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     init_x = jnp.zeros(env.observation_space(env_params).shape)
-
-    if shared_network:
-        actor_critic_params = actor_network.init(actor_key, init_x)
-        actor_critic = TrainState.create(
-            params=actor_critic_params, tx=actor_tx, apply_fn=actor_network.apply
-        )
-        return actor_critic, None
-
-    if critic_network is None or critic_key is None:
-        raise ValueError(
-            "Critic network and key should be defined if not using                 "
-            " shared network"
-        )
     actor_params = actor_network.init(actor_key, init_x)
     critic_params = critic_network.init(critic_key, init_x)
     actor = TrainState.create(
@@ -253,3 +230,9 @@ def predict_probs(
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
     return actor_state.apply_fn(actor_params, obs).probs  # type: ignore[attr-defined]
+
+
+def get_pi(actor_state: TrainState, actor_params: FrozenDict, obs: ndarray) -> Array:
+    """Return the predicted policy"""
+    policy = actor_state.apply_fn(actor_params, obs)
+    return policy  # type: ignore[attr-defined]

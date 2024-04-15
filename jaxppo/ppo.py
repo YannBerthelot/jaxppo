@@ -1,4 +1,5 @@
 """PPO class to easily handle the agent"""
+
 from typing import Optional
 
 import gymnax
@@ -9,11 +10,15 @@ from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
 from jaxppo.config import PPOConfig
-from jaxppo.networks import predict_probs as network_predict_probs
-from jaxppo.networks import predict_probs_and_value
-from jaxppo.networks import predict_value as network_predict_value
-from jaxppo.train import make_train
+from jaxppo.networks.networks import get_pi
+from jaxppo.networks.networks import predict_probs as network_predict_probs
+from jaxppo.networks.networks import predict_value as network_predict_value
+from jaxppo.networks.networks_RNN import ScannedRNN, init_hidden_state
+from jaxppo.train import init_agent, make_train
+from jaxppo.types_rnn import HiddenState
+from jaxppo.utils import load_model
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
+from jaxppo.wrappers import ClipAction, NormalizeVecObservation, NormalizeVecReward
 
 
 class PPO:
@@ -38,10 +43,16 @@ class PPO:
         logging_config: Optional[LoggingConfig] = None,
         env_params: Optional[EnvParams] = None,
         anneal_lr: bool = True,
-        shared_network: bool = False,
-        vf_coef: Optional[float] = None,
         max_grad_norm: float = 0.5,
         advantage_normalization: bool = True,
+        save: bool = False,
+        save_folder: str = "./models",
+        log_video: bool = False,
+        video_log_frequency: Optional[int] = None,
+        save_frequency: Optional[int] = None,
+        lstm_hidden_size: Optional[int] = None,
+        seed: int = 42,
+        continuous: bool = False,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -89,16 +100,53 @@ class PPO:
             logging_config=logging_config,
             env_params=env_params,
             anneal_lr=anneal_lr,
-            shared_network=shared_network,
-            vf_coef=vf_coef,
             max_grad_norm=max_grad_norm,
             advantage_normalization=advantage_normalization,
+            save=save,
+            save_folder=save_folder,
+            log_video=log_video,
+            log_video_frequency=video_log_frequency,
+            save_frequency=save_frequency,
+            lstm_hidden_size=lstm_hidden_size,
+            continuous=continuous,
         )
+        key = random.PRNGKey(seed)
+        num_updates = total_timesteps // num_steps // num_envs
+        if isinstance(env_id, str):
+            env_id, env_params = gymnax.make(env_id)
+        env = env_id
+        if continuous:
+            env = ClipAction(env, low=0.0, high=1.0)
+            env = NormalizeVecObservation(env)
+            env = NormalizeVecReward(env, gamma)
+        (
+            self._actor_state,
+            self._critic_state,
+            self.actor_hidden_state,
+            self.critic_hidden_state,
+            self.rng,
+        ) = init_agent(
+            key,
+            env,
+            actor_architecture,
+            critic_architecture,
+            num_envs,
+            anneal_lr,
+            learning_rate,
+            num_minibatches,
+            update_epochs,
+            num_updates,
+            max_grad_norm,
+            env_params,
+            continuous=continuous,
+        )
+        self.recurrent = lstm_hidden_size is not None
 
-        self._actor_state = None
-        self._critic_state = None
-        self.actor_network = None
-        self.critic_network = None
+    def load(self, path: str):
+        """Load the actor and critic state from the save file in path"""
+        self._actor_state, self._critic_state = load_model(
+            path, self._actor_state, self._critic_state
+        )
 
     def train(self, seed: int, test: bool = False):
         """
@@ -121,31 +169,64 @@ class PPO:
             )
             init_logging(self.config.logging_config)
 
-        train_jit = make_train(
-            total_timesteps=self.config.total_timesteps,
-            num_steps=self.config.num_steps,
-            num_envs=self.config.num_envs,
-            env_id=self.config.env_id,
-            learning_rate=self.config.learning_rate,
-            num_minibatches=self.config.num_minibatches,
-            update_epochs=self.config.update_epochs,
-            actor_architecture=self.config.actor_architecture,
-            critic_architecture=self.config.critic_architecture,
-            gamma=self.config.gamma,
-            gae_lambda=self.config.gae_lambda,
-            clip_coef=self.config.clip_coef,
-            clip_coef_vf=self.config.clip_coef_vf,
-            ent_coef=self.config.ent_coef,
-            log=self.config.logging_config is not None,
-            env_params=self.config.env_params,
-            anneal_lr=self.config.anneal_lr,
-            max_grad_norm=self.config.max_grad_norm,
-            shared_network=self.config.shared_network,
-            vf_coef=self.config.vf_coef,
-            advantage_normalization=self.config.advantage_normalization,
+        train_jit = jax.jit(
+            make_train(
+                total_timesteps=self.config.total_timesteps,
+                num_steps=self.config.num_steps,
+                num_envs=self.config.num_envs,
+                env_id=self.config.env_id,
+                learning_rate=self.config.learning_rate,
+                num_minibatches=self.config.num_minibatches,
+                update_epochs=self.config.update_epochs,
+                actor_architecture=self.config.actor_architecture,
+                critic_architecture=self.config.critic_architecture,
+                gamma=self.config.gamma,
+                gae_lambda=self.config.gae_lambda,
+                clip_coef=self.config.clip_coef,
+                clip_coef_vf=self.config.clip_coef_vf,
+                ent_coef=self.config.ent_coef,
+                log=self.config.logging_config is not None,
+                env_params=self.config.env_params,
+                anneal_lr=self.config.anneal_lr,
+                max_grad_norm=self.config.max_grad_norm,
+                advantage_normalization=self.config.advantage_normalization,
+                save=self.config.save,
+                save_folder=self.config.save_folder,
+                save_frequency=self.config.save_frequency,
+                video_log_frequency=self.config.log_video_frequency,
+                log_video=self.config.log_video,
+                lstm_hidden_size=self.config.lstm_hidden_size,
+                continuous=self.config.continuous,
+            )
         )
 
-        self._actor_state, self._critic_state, _, _, _ = train_jit(key)
+        runner_state = train_jit(key)
+        self._actor_state, self._critic_state = (
+            runner_state.actor_state,
+            runner_state.critic_state,
+        )
+        self._actor_hidden_state, self._critic_hidden_state = (
+            runner_state.actor_hidden_state,
+            runner_state.critic_hidden_state,
+        )
+        # mean, stddev = (
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [0.0]
+        #     ).distribution.mean(),
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [0.0]
+        #     ).distribution.stddev(),
+        # )
+        # jax.debug.print("mean={x} stddev={y}", x=mean, y=stddev)
+        # mean, stddev = (
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [1.0]
+        #     ).distribution.mean(),
+        #     self._actor_state.apply_fn(
+        #         self._actor_state.params, [1.0]
+        #     ).distribution.stddev(),
+        # )
+        # jax.debug.print("mean={x} stddev={y}", x=mean, y=stddev)
         if test:
             self.test(self.config.num_episode_test, seed=seed)
 
@@ -156,26 +237,52 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-        if self.config.shared_network:
-            return predict_probs_and_value(
-                self._actor_state, self._actor_state.params, obs
-            )[0]
-        return network_predict_probs(self._actor_state, self._actor_state.params, obs)
+        if self._actor_hidden_state is None and self.recurrent:
+            raise ValueError("Actor hidden state is not defined in reccurent mode")
 
-    def predict_value(self, obs: jax.Array) -> jax.Array:
+        probs = network_predict_probs(
+            self._actor_state,
+            self._actor_state.params,
+            obs[jnp.newaxis, :] if self.recurrent else obs,
+            self._actor_hidden_state[0][jnp.newaxis, :] if self.recurrent else None,
+            jnp.array([[True]]) if self.recurrent else None,
+            recurrent=self.recurrent,
+        )
+        return probs[0][0] if self.recurrent else probs
+
+    def predict_value(
+        self,
+        obs: jax.Array,
+        hidden: Optional[HiddenState] = None,
+        done: Optional[bool] = None,
+    ) -> tuple[jax.Array, Optional[HiddenState]]:
         """Predict the value of obs according to critic"""
         if self._critic_state is None:
             raise ValueError(
                 "Attempted to predict value without a critic state/training the agent"
                 " first"
             )
-        if self.config.shared_network:
-            return predict_probs_and_value(
-                self._actor_state, self._actor_state.params, obs
-            )[1]
-        return network_predict_value(self._critic_state, self._critic_state.params, obs)
+        if hidden is None and self.recurrent:
+            if self._critic_hidden_state is None:
+                raise ValueError("Critic hidden state is not defined in reccurent mode")
+            hidden = self._critic_hidden_state[0][jnp.newaxis, :]
 
-    def get_action(self, obs: jax.Array, key: random.PRNGKeyArray) -> jax.Array:
+        return network_predict_value(
+            self._critic_state,
+            self._critic_state.params,
+            obs[jnp.newaxis, :] if self.recurrent else obs,
+            hidden if self.recurrent else None,
+            jnp.array([[done]]) if self.recurrent else None,
+            recurrent=self.recurrent,
+        )
+
+    def get_action(
+        self,
+        obs: jax.Array,
+        key: jax.Array,
+        hidden: Optional[HiddenState] = None,
+        done: Optional[bool] = None,
+    ) -> tuple[jax.Array, Optional[HiddenState]]:
         """Returns a numpy action compliant with gym using the current \
             state of the agent"""
         if self._actor_state is None:
@@ -183,20 +290,50 @@ class PPO:
                 "Attempted to predict probs without an actor state/training the agent"
                 " first"
             )
-        if self.config.shared_network:
-            pi, _ = self._actor_state.apply_fn(self._actor_state.params, obs)
-        else:
-            pi = self._actor_state.apply_fn(self._actor_state.params, obs)
-        return pi.sample(seed=key)
+
+        pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+
+        pi, new_hidden = get_pi(
+            self._actor_state,
+            self._actor_state.params,
+            obs[jnp.newaxis, :] if self.recurrent else obs,
+            hidden if self.recurrent else None,
+            done if self.recurrent else None,
+            self.recurrent,
+        )
+        action = pi.sample(seed=key)
+        return action, new_hidden
+
+    def get_action_distribution(
+        self,
+        obs: jax.Array,
+        hidden: Optional[HiddenState] = None,
+        done: Optional[bool] = None,
+    ) -> tuple[jax.Array, Optional[HiddenState]]:
+        """Returns a numpy action compliant with gym using the current \
+            state of the agent"""
+        if self._actor_state is None:
+            raise ValueError(
+                "Attempted to predict probs without an actor state/training the agent"
+                " first"
+            )
+
+        # pi = self._actor_state.apply_fn(self._actor_state.params, obs)
+        pi, _ = get_pi(
+            self._actor_state,
+            self._actor_state.params,
+            obs[jnp.newaxis, :] if self.recurrent else obs,
+            hidden if self.recurrent else None,
+            done if self.recurrent else None,
+            self.recurrent,
+        )
+        return pi
 
     def test(self, n_episodes: int, seed: int):
         """Evaluate the agent over n_episodes (using seed for rng) and log the episodic\
               returns"""
         key = random.PRNGKey(seed)
-        (
-            key,
-            action_key,
-        ) = random.split(key, num=2)
+        (key, action_key, hidden_init_key) = random.split(key, num=3)
         if isinstance(self.config.env_id, str):
             env, env_params = gymnax.make(self.config.env_id)
         else:
@@ -209,16 +346,42 @@ class PPO:
         obs, state = vmap_reset(vmap_keys, env_params)
         done = jnp.zeros(n_episodes, dtype=jnp.int8)
         rewards = jnp.zeros(n_episodes)
-        step = 0
-        while not done.all():
-            action_key, rng = jax.random.split(action_key)
-            actions = self.get_action(obs, rng)
-            obs, state, reward, new_done, _ = vmap_step(
-                vmap_keys, state, actions, env_params
+        hidden = (
+            init_hidden_state(
+                ScannedRNN(self.config.lstm_hidden_size),
+                num_envs=n_episodes,
+                rng=hidden_init_key,
             )
-            step += 1
+            if self.recurrent
+            else None
+        )
+        carry = (rewards, action_key, obs, done, hidden, state)
+
+        def step_env(carry):
+            (rewards, action_key, obs, done, hidden, state) = carry
+            action_key, rng = jax.random.split(action_key)
+            actions, hidden = self.get_action(
+                obs[jnp.newaxis, :] if self.recurrent else obs,
+                rng,
+                done=done[jnp.newaxis, :] if self.recurrent else None,
+                hidden=hidden if self.recurrent else None,
+            )
+            obs, state, reward, new_done, _ = vmap_step(
+                vmap_keys,
+                state,
+                actions.squeeze(0) if self.recurrent else actions,
+                env_params,
+            )
             done = done | jnp.int8(new_done)
             rewards = rewards + (reward * (1 - done))
+            return (rewards, action_key, obs, done, hidden, state)
+
+        def not_all_env_done(carry):
+            done = carry[3]
+            return jnp.logical_not(done.all())
+
+        rewards = jax.lax.while_loop(not_all_env_done, step_env, carry)[0]
+
         if self.config.logging_config is not None:
             wandb_test_log(rewards)
 
@@ -228,8 +391,8 @@ if __name__ == "__main__":
 
     num_envs = 4
     num_steps = 2048
-    env_id = "CartPole-v1"
-    logging_config = LoggingConfig("Jax PPO shared", "test", config={})
+    env_id = "Pendulum-v1"
+    logging_config = LoggingConfig("Continuous PPO", "test", config={})
     init_logging(logging_config=logging_config)
     sb3_batch_size = 64
     agent = PPO(
@@ -249,9 +412,19 @@ if __name__ == "__main__":
         critic_architecture=["64", "tanh", "64", "tanh"],
         clip_coef_vf=None,
         anneal_lr=False,
-        shared_network=False,
         max_grad_norm=0.5,
-        vf_coef=0.5,
+        save=True,
+        log_video=True,
+        video_log_frequency=None,
+        continuous=True,
+        # lstm_hidden_size=16,
     )
-    agent.train(seed=1, test=False)
-    wandb.finish()
+
+    def training_loop(seed):
+        """Train the agent in a functional fashion for jax"""
+        agent.train(seed, test=False)
+        wandb.finish()
+
+    training_loop(42)
+    # seeds = jnp.array(range(2))
+    # jax.vmap(training_loop, in_axes=(None, 0))(seeds)
