@@ -24,7 +24,10 @@ class LoggingConfig:
     group_name: Optional[str] = None
 
 
-def init_logging(logging_config: LoggingConfig, folder: str = "wandb"):
+def init_logging(
+    logging_config: LoggingConfig,
+    folder: Optional[str] = None,
+):
     """Init the wandb run with the logging config"""
 
     wandb.init(

@@ -42,7 +42,7 @@ moviepy = "^1.0.3"
 
 [[tool.poetry.source]]
 name = "pypi"
-priority = "default"
+priority = "primary"
 
 
 [[tool.poetry.source]]

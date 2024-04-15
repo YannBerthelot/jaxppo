@@ -79,7 +79,11 @@ def get_history_config_and_name_from_run(run: WandbRun) -> tuple[Generator, dict
 
 
 def upload_runs(
-    project_name: str, run_name: str, runs: list, config: dict, folder: str = "wandb"
+    project_name: str,
+    run_name: str,
+    runs: list,
+    config: dict,
+    folder: Optional[str] = None,
 ) -> None:
     """Build the runs locally then upload the collected runs"""
     for i, run in tqdm(enumerate(runs)):
