@@ -39,7 +39,7 @@ def get_fake_run(run_id):
 def create_fake_run_and_get_run_and_id(folder: str = "wandb_fake"):
     """Create a fake run and upload it to W&B"""
     run_id = wandb.util.generate_id()
-    if folder != "wandb":
+    if folder is not None:
         os.makedirs(folder, exist_ok=True)
     run = wandb.init(
         entity=os.environ["WANDB_ENTITY"],

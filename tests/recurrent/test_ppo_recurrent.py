@@ -158,7 +158,7 @@ def test_ppo_train_and_log():
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
     fake_logging_config = LoggingConfig("Test multithreading", "test", config={})
-    folder = "wand_fake"
+    folder = "wandb_fake"
     os.makedirs(folder, exist_ok=True)
     wandb.init(mode="disabled", dir=folder)
     agent = PPO(
