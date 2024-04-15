@@ -78,7 +78,9 @@ def get_history_config_and_name_from_run(run: WandbRun) -> tuple[Generator, dict
     return get_history_from_run(run), get_config_from_run(run), get_name_from_run(run)
 
 
-def upload_runs(project_name: str, run_name: str, runs: list, config: dict) -> None:
+def upload_runs(
+    project_name: str, run_name: str, runs: list, config: dict, folder: str = "wandb"
+) -> None:
     """Build the runs locally then upload the collected runs"""
     for i, run in tqdm(enumerate(runs)):
         run_config = config
@@ -89,6 +91,7 @@ def upload_runs(project_name: str, run_name: str, runs: list, config: dict) -> N
             config=config,
             reinit=True,
             mode="offline",
+            dir=folder,
         )
         # Build
         for step in tqdm(run, leave=False):
@@ -121,6 +124,7 @@ def split_runs_and_upload_them(
     project_name_in: str,
     num_split: int,
     project_name_out: Optional[str] = None,
+    folder: str = "wandb",
 ) -> None:
     """
     Split the defined wandb run of the project/user into runs into the project_name_out.
@@ -145,7 +149,7 @@ def split_runs_and_upload_them(
         if project_name_out is None:
             project_name_out = project_name_in
         print("Runs split. Uploading runs.")
-        upload_runs(project_name_out, name, runs, config)
+        upload_runs(project_name_out, name, runs, config, folder=folder)
         print("Uploading done.")
 
 

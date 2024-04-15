@@ -148,7 +148,7 @@ class PPO:
             path, self._actor_state, self._critic_state
         )
 
-    def train(self, seed: int, test: bool = False):
+    def train(self, seed: int, test: bool = False, wandb_folder: str = "wandb"):
         """
         Trains the agent using the agent's config, will also evaluate at the end if test is set to true
 
@@ -167,7 +167,7 @@ class PPO:
             self.config.logging_config.config = dict(
                 config, **self.config.logging_config.config
             )
-            init_logging(self.config.logging_config)
+            init_logging(self.config.logging_config, folder=wandb_folder)
 
         train_jit = jax.jit(
             make_train(
@@ -393,7 +393,7 @@ if __name__ == "__main__":
     num_steps = 2048
     env_id = "Pendulum-v1"
     logging_config = LoggingConfig("Continuous PPO", "test", config={})
-    init_logging(logging_config=logging_config)
+    init_logging(logging_config=logging_config, folder="wandb_logs")
     sb3_batch_size = 64
     agent = PPO(
         env_id=env_id,
