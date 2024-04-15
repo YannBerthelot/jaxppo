@@ -10,9 +10,8 @@ from typing import Any, Generator, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
-from tqdm import tqdm
-
 import wandb
+from tqdm import tqdm
 
 WandbRun = Any
 os.environ["WANDB_ENTITY"] = "yann-berthelot"

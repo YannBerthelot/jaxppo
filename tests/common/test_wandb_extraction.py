@@ -5,8 +5,8 @@ import shutil
 from typing import Any
 
 import jax
-
 import wandb
+
 from jaxppo.wandb_extraction import split_run
 
 WandbRun = Any

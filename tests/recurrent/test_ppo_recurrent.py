@@ -1,12 +1,14 @@
 """Test ppo"""
 
+import os
+
 import gymnasium as gym
 import gymnax
 import jax.numpy as jnp
 import pytest
+import wandb
 from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
 
-import wandb
 from jaxppo.ppo import PPO
 from jaxppo.train import make_train
 from jaxppo.wandb_logging import LoggingConfig
@@ -156,7 +158,9 @@ def test_ppo_train_and_log():
     learning_rate = 2.5e-4
     env_id = "CartPole-v1"
     fake_logging_config = LoggingConfig("Test multithreading", "test", config={})
-    wandb.init(mode="disabled", dir="wandb_fake")
+    folder = "wand_fake"
+    os.makedirs(folder, exist_ok=True)
+    wandb.init(mode="disabled", dir=folder)
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,

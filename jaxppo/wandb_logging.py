@@ -6,7 +6,6 @@ from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
-
 import wandb
 
 os.environ["WANDB_SILENT"] = "false"
