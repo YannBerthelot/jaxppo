@@ -42,6 +42,8 @@ class PPOConfig(BaseModel):
     save_frequency: Optional[int] = None
     lstm_hidden_size: Optional[int] = None
     continuous: bool = False
+    average_reward: bool = False
+    window_size: int = 32
 
     @field_validator("env_id")
     @classmethod

@@ -1878,8 +1878,8 @@ pytest = "^7.4.0"
 [package.source]
 type = "git"
 url = "https://github.com/YannBerthelot/ProbingEnvironments.git"
-reference = "gymnax"
-resolved_reference = "a8a0cadd4c86928bf09cd7039b3bbd53e33d70c7"
+reference = "HEAD"
+resolved_reference = "54d33ee6b1c956b858c3edae0bb3e1f65691ed65"
 
 [[package]]
 name = "proglog"
@@ -2789,4 +2789,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10, <3.13"
-content-hash = "2ce5c8a47c333eb35308626842581817a0de81feb807aebcb365d530f993e2a0"
+content-hash = "8c5cbe34d8046cf40ba55d4e20a61185bb23ac4e855ae5571219b80b01758db6"

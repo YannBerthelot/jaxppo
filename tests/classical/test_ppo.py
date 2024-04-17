@@ -341,3 +341,24 @@ def test_load_agent():
     compare_params(critic.params, new_agent._critic_state.params)
     # assert actor.params == new_agent._actor_state.params
     # assert critic == new_agent._critic_state
+
+
+def test_ppo_train_average_reward():
+    """Test that the ppo train function doesn't fail"""
+    num_envs = NUM_ENVS
+    num_steps = NUM_STEPS
+    total_timesteps = TOTAL_TIMESTEPS
+    learning_rate = 2.5e-4
+    env_id, env_params = gymnax.make("CartPole-v1")
+    agent = PPO(
+        total_timesteps=total_timesteps,
+        num_steps=num_steps,
+        num_envs=num_envs,
+        env_id=env_id,
+        learning_rate=learning_rate,
+        actor_architecture=ARCHITECTURE,
+        critic_architecture=ARCHITECTURE,
+        average_reward=True,
+        env_params=env_params,
+    )
+    agent.train(seed=42, test=True)

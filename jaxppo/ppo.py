@@ -53,6 +53,8 @@ class PPO:
         lstm_hidden_size: Optional[int] = None,
         seed: int = 42,
         continuous: bool = False,
+        average_reward: bool = False,
+        window_size: int = 32,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -81,7 +83,6 @@ class PPO:
               Defaults to 0.01.
         log (bool, optional): Wether or not to log training using wandb.
         """
-
         self.config = PPOConfig(
             total_timesteps=total_timesteps,
             num_steps=num_steps,
@@ -109,6 +110,8 @@ class PPO:
             save_frequency=save_frequency,
             lstm_hidden_size=lstm_hidden_size,
             continuous=continuous,
+            average_reward=average_reward,
+            window_size=window_size,
         )
         key = random.PRNGKey(seed)
         num_updates = total_timesteps // num_steps // num_envs
@@ -169,35 +172,35 @@ class PPO:
             )
             init_logging(self.config.logging_config, folder=wandb_folder)
 
-        train_jit = jax.jit(
-            make_train(
-                total_timesteps=self.config.total_timesteps,
-                num_steps=self.config.num_steps,
-                num_envs=self.config.num_envs,
-                env_id=self.config.env_id,
-                learning_rate=self.config.learning_rate,
-                num_minibatches=self.config.num_minibatches,
-                update_epochs=self.config.update_epochs,
-                actor_architecture=self.config.actor_architecture,
-                critic_architecture=self.config.critic_architecture,
-                gamma=self.config.gamma,
-                gae_lambda=self.config.gae_lambda,
-                clip_coef=self.config.clip_coef,
-                clip_coef_vf=self.config.clip_coef_vf,
-                ent_coef=self.config.ent_coef,
-                log=self.config.logging_config is not None,
-                env_params=self.config.env_params,
-                anneal_lr=self.config.anneal_lr,
-                max_grad_norm=self.config.max_grad_norm,
-                advantage_normalization=self.config.advantage_normalization,
-                save=self.config.save,
-                save_folder=self.config.save_folder,
-                save_frequency=self.config.save_frequency,
-                video_log_frequency=self.config.log_video_frequency,
-                log_video=self.config.log_video,
-                lstm_hidden_size=self.config.lstm_hidden_size,
-                continuous=self.config.continuous,
-            )
+        train_jit = make_train(
+            total_timesteps=self.config.total_timesteps,
+            num_steps=self.config.num_steps,
+            num_envs=self.config.num_envs,
+            env_id=self.config.env_id,
+            learning_rate=self.config.learning_rate,
+            num_minibatches=self.config.num_minibatches,
+            update_epochs=self.config.update_epochs,
+            actor_architecture=self.config.actor_architecture,
+            critic_architecture=self.config.critic_architecture,
+            gamma=self.config.gamma,
+            gae_lambda=self.config.gae_lambda,
+            clip_coef=self.config.clip_coef,
+            clip_coef_vf=self.config.clip_coef_vf,
+            ent_coef=self.config.ent_coef,
+            log=self.config.logging_config is not None,
+            env_params=self.config.env_params,
+            anneal_lr=self.config.anneal_lr,
+            max_grad_norm=self.config.max_grad_norm,
+            advantage_normalization=self.config.advantage_normalization,
+            save=self.config.save,
+            save_folder=self.config.save_folder,
+            save_frequency=self.config.save_frequency,
+            video_log_frequency=self.config.log_video_frequency,
+            log_video=self.config.log_video,
+            lstm_hidden_size=self.config.lstm_hidden_size,
+            continuous=self.config.continuous,
+            average_reward_mode=self.config.average_reward,
+            window_size=self.config.window_size,
         )
 
         runner_state = train_jit(key)
@@ -244,8 +247,8 @@ class PPO:
             self._actor_state,
             self._actor_state.params,
             obs[jnp.newaxis, :] if self.recurrent else obs,
-            self._actor_hidden_state[0][jnp.newaxis, :] if self.recurrent else None,
-            jnp.array([[True]]) if self.recurrent else None,
+            self._actor_hidden_state[0][jnp.newaxis, :] if self.recurrent else None,  # type: ignore[index]
+            (jnp.array([[True]]) if self.recurrent else None),  # type: ignore[index]
             recurrent=self.recurrent,
         )
         return probs[0][0] if self.recurrent else probs
@@ -417,6 +420,8 @@ if __name__ == "__main__":
         log_video=True,
         video_log_frequency=None,
         continuous=True,
+        average_reward=True,
+        window_size=2048,
         # lstm_hidden_size=16,
     )
 

@@ -56,6 +56,7 @@ class RunnerState(NamedTuple):
     critic_hidden_state: Optional[jnp.ndarray] = None
     num_update: int = 0
     timestep: int = 0
+    average_reward: float = 0.0
 
 
 class UpdateState(NamedTuple):
@@ -72,13 +73,15 @@ class UpdateState(NamedTuple):
     critic_hidden_state: Optional[HiddenState] = None
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["average_reward_mode"])
 def _calculate_gae(
     traj_batch: Transition,
     last_val: jax.Array,
     gamma: float,
     gae_lambda: float,
     last_done: Optional[jax.Array] = None,
+    average_reward: Optional[jax.Array] = None,
+    average_reward_mode: bool = False,
 ) -> tuple[jax.Array, jax.Array]:
     """
     Compute gae advantages
@@ -118,13 +121,31 @@ def _calculate_gae(
             transition.value,
             transition.reward,
         )
+        if average_reward_mode:
+            assert average_reward is not None
+            target = reward - average_reward + next_value
+            delta = target - value
+            gae = delta  # + gae * gae_lambda
+            # jax.debug.print(
+            #     (
+            #         "reward {x} avg reward {y} delta {z} value {v} next_value {n} obs"
+            #         " {o} gae {g}"
+            #     ),
+            #     x=reward,
+            #     y=average_reward,
+            #     z=delta,
+            #     v=value,
+            #     n=next_value,
+            #     o=transition.obs,
+            #     g=gae,
+            # )
+        else:
+            next_state_is_non_terminal = (
+                1.0 - done if next_done is None else 1.0 - next_done
+            )
 
-        next_state_is_non_terminal = (
-            1.0 - done if next_done is None else 1.0 - next_done
-        )
-
-        delta = reward + gamma * next_value * next_state_is_non_terminal - value
-        gae = delta + gamma * gae_lambda * next_state_is_non_terminal * gae
+            delta = reward + gamma * next_value * next_state_is_non_terminal - value
+            gae = delta + gamma * gae_lambda * next_state_is_non_terminal * gae
 
         # tuple is carry-over state for scan, gae after the comma is the actual return at the end of the scan
         return (gae, value, done if next_done is not None else None), gae
@@ -233,6 +254,8 @@ def make_train(  # pylint: disable=W0102, R0913
     save_frequency: Optional[int] = None,
     lstm_hidden_size: Optional[int] = None,
     continuous: bool = False,
+    average_reward_mode: bool = False,
+    window_size: int = 32,
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -265,7 +288,6 @@ def make_train(  # pylint: disable=W0102, R0913
         Callable[ ..., tuple[TrainState, TrainState, EnvState, jax.Array,\
               jax.Array] ]: The train function to be called to actually train.
     """
-
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
     if isinstance(env_id, str):
@@ -490,7 +512,13 @@ def make_train(  # pylint: disable=W0102, R0913
             runner_state, traj_batch = jax.lax.scan(
                 f=_env_step_pre_partial, init=runner_state, xs=None, length=num_steps
             )
+            avg = None
 
+            if average_reward_mode:
+                avg = jnp.average(
+                    traj_batch.reward[: -min(window_size, num_steps - 1)],
+                    axis=0,
+                )
             # CALCULATE ADVANTAGE
             last_val, _ = predict_value(
                 runner_state.critic_state,
@@ -512,6 +540,8 @@ def make_train(  # pylint: disable=W0102, R0913
                 last_done=runner_state.last_done,
                 gamma=gamma,
                 gae_lambda=gae_lambda,
+                average_reward_mode=average_reward_mode,
+                average_reward=avg,
             )
 
             # UPDATE NETWORK
@@ -677,7 +707,10 @@ def make_train(  # pylint: disable=W0102, R0913
                             if continuous
                             else (minibatch_size,)
                         )
-                        assert ratio.shape == gae.shape
+                        assert ratio.shape == gae.shape, (
+                            f"Mismatch between ratio shape ({ratio.shape}) and gae"
+                            f" shape ({gae.shape})"
+                        )
                         loss_actor1 = ratio * gae
                         loss_actor2 = (
                             jnp.clip(
@@ -840,6 +873,7 @@ def make_train(  # pylint: disable=W0102, R0913
                 def collect_rollout(rng):
                     episode_done = False
                     reward_collected = jnp.zeros(1)
+                    entropy_collected = jnp.zeros(1)
                     rng, reset_rng = jax.random.split(rng)
                     obsv, env_state = env.reset(reset_rng, env_params)
                     initial_actor_hidden_state = (
@@ -860,9 +894,12 @@ def make_train(  # pylint: disable=W0102, R0913
                     )
 
                     def step_eval_env(runner_state_and_traj_batch):
-                        runner_state_eval, episode_done, reward_collected = (
-                            runner_state_and_traj_batch
-                        )
+                        (
+                            runner_state_eval,
+                            episode_done,
+                            reward_collected,
+                            entropy_collected,
+                        ) = runner_state_and_traj_batch
                         env_state, last_obs, rng, actor_hidden_state = runner_state_eval
                         # SELECT ACTION
                         pi, actor_hidden_state = get_pi(
@@ -879,6 +916,7 @@ def make_train(  # pylint: disable=W0102, R0913
                         )
                         rng, action_key = jax.random.split(rng)
                         action = pi.sample(seed=action_key)
+                        entropy_collected += pi.entropy().mean()
 
                         if recurrent:
                             action = action.squeeze(0)[0]
@@ -892,18 +930,28 @@ def make_train(  # pylint: disable=W0102, R0913
                         )
                         runner_state_eval = (env_state, obsv, rng, actor_hidden_state)
                         reward_collected += reward
-                        return (runner_state_eval, episode_done, reward_collected)
+                        return (
+                            runner_state_eval,
+                            episode_done,
+                            reward_collected,
+                            entropy_collected,
+                        )
 
                     def check_done_is_false(runner_state_and_traj_batch):
-                        _, done, _ = runner_state_and_traj_batch
+                        _, done, _, _ = runner_state_and_traj_batch
                         return jnp.array_equal(done, jnp.zeros_like(done))
 
-                    _, _, reward_collected = jax.lax.while_loop(
+                    _, _, reward_collected, entropy_collected = jax.lax.while_loop(
                         check_done_is_false,
                         step_eval_env,
-                        (runner_state_eval, episode_done, reward_collected),
+                        (
+                            runner_state_eval,
+                            episode_done,
+                            reward_collected,
+                            entropy_collected,
+                        ),
                     )
-                    return reward_collected
+                    return reward_collected, entropy_collected
 
             # Evaluation over num eval envs
 
@@ -913,14 +961,20 @@ def make_train(  # pylint: disable=W0102, R0913
                 # eval_rewards = jax.vmap(collect_rollout, in_axes=0)(
                 #     jax.random.split(update_state.rng, num_eval_envs)
                 # )
-                eval_rewards = collect_rollout(update_state.rng)
+                eval_rewards, eval_entropy = collect_rollout(update_state.rng)
 
-                metrics_to_log = {
+                rewards_to_log = {
                     f"episodic reward/reward-{ii}": reward
                     for ii, reward in enumerate(eval_rewards)
                 }
-                metrics_to_log["timestep"] = timestep
-                jax.debug.callback(log_variables, metrics_to_log)
+                rewards_to_log["timestep"] = timestep
+                jax.debug.callback(log_variables, rewards_to_log)
+                entropy_to_log = {
+                    f"episodic entropy/entropy-{ii}": entropy
+                    for ii, entropy in enumerate(eval_entropy)
+                }
+                entropy_to_log["timestep"] = timestep
+                jax.debug.callback(log_variables, entropy_to_log)
 
             metric = traj_batch.info
             runner_state = RunnerState(
