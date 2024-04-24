@@ -3,7 +3,7 @@
 import os
 import pickle
 from functools import partial
-from typing import Any, Callable, Optional, Tuple, cast
+from typing import Any, Callable, Optional, Tuple, TypeAlias, cast
 
 import gymnasium as gym
 import gymnax
@@ -13,11 +13,20 @@ from flax.serialization import from_state_dict, to_state_dict
 from flax.training.train_state import TrainState
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from gymnax import EnvParams
-from gymnax.environments.environment import Environment
+from gymnax.environments.environment import Environment as GymnaxEnvironment
 from jax import random
 
 from jaxppo.wandb_logging import log_model
 from jaxppo.wrappers import LogWrapper
+
+try:
+    from brax import envs as brax_envs
+
+    BraxEnvironment = brax_envs.Env | brax_envs.wrappers.training.AutoResetWrapper
+    Environment: TypeAlias = GymnaxEnvironment | BraxEnvironment
+except ImportError:
+    brax_envs = None
+    Environment: TypeAlias = GymnaxEnvironment
 
 
 def get_env_action_shape(
@@ -55,15 +64,52 @@ def sample_obs_space(
 ) -> Any:
     """Sample an action from an environment"""
     key = random.PRNGKey(42)
-    return env.observation_space(env_params).sample(key)
+    if isinstance(env, GymnaxEnvironment):
+        return env.observation_space(env_params).sample(key)
+    elif brax_envs is not None:
+        if isinstance(env, BraxEnvironment):
+            return env.reset(key)
+    else:
+        raise ValueError(f"Unsupported environment type {type(env)}")
+
+
+def get_observation_space_shape(
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
+    env_params: Optional[EnvParams],
+) -> int:
+    if brax_envs is not None:
+        if isinstance(env, BraxEnvironment):
+            return env.observation_size
+    observation_space = env.observation_space(env_params)
+    if isinstance(
+        observation_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
+    ):
+        observation_space_shape = int(observation_space.n)
+    elif isinstance(
+        observation_space, (gym.spaces.Box, gymnax.environments.spaces.Box)
+    ):
+        observation_space_shape = (
+            int(observation_space.shape[0]) if len(observation_space.shape) > 0 else 1
+        )
+    else:
+        action_shape = cast(
+            Tuple[int], observation_space.shape
+        )  # guaranteed to have a tuple now
+        observation_space_shape = int(action_shape[0])
+    return observation_space_shape
 
 
 def get_num_actions(
-    env: gym.Env | SyncVectorEnv | Environment | LogWrapper, params: EnvParams
+    env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
+    params: Optional[EnvParams] = None,
 ) -> int:
     """Get the number of actions (discrete or continuous) in a gym env"""
-    action_space = env.action_space(params)
+
     # TODO : add continuous
+    if brax_envs is not None:
+        if isinstance(env, BraxEnvironment):
+            return env.action_size
+    action_space = env.action_space(params)
     if isinstance(
         action_space, (gym.spaces.Discrete, gymnax.environments.spaces.Discrete)
     ):
@@ -163,3 +209,19 @@ def check_update_frequency(
     else:
         cond = num_update == num_total_updates
     return cond
+
+
+def build_env_from_id(env_id: str, **kwargs) -> tuple[Environment, Optional[EnvParams]]:
+    if env_id in gymnax.registered_envs:
+        env, env_params = gymnax.make(env_id)
+        return env, env_params
+    if brax_envs is not None:
+        if env_id in dir(brax_envs):
+            return brax_envs.create(env_id, **kwargs), None
+        else:
+            raise ValueError(f"Environment {env_id} not found in gymnax or mjx")
+    else:
+        raise ValueError(
+            f"The env id ({env_id}) provided is not recognized as a valid gymnax env,"
+            " cannot check for Mujoco as mjx is not installed."
+        )

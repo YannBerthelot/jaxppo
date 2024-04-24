@@ -2,7 +2,6 @@
 
 from typing import Any, Callable, NamedTuple, Optional
 
-import gymnax
 import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
@@ -12,6 +11,7 @@ from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 from jax.tree_util import Partial as partial
 
+from jaxppo.evaluate import evaluate
 from jaxppo.networks.networks import (
     get_adam_tx,
     get_pi,
@@ -19,11 +19,13 @@ from jaxppo.networks.networks import (
     init_networks,
     predict_value,
 )
-from jaxppo.networks.networks_RNN import init_hidden_state
 from jaxppo.types_rnn import BatchInfo, HiddenState
 from jaxppo.utils import (
+    GymnaxEnvironment,
     annealed_linear_schedule,
+    build_env_from_id,
     check_update_frequency,
+    get_num_actions,
     get_parameterized_schedule,
     save_model,
 )
@@ -256,6 +258,7 @@ def make_train(  # pylint: disable=W0102, R0913
     continuous: bool = False,
     average_reward_mode: bool = False,
     window_size: int = 32,
+    episode_length: int = Optional[None],
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -291,11 +294,11 @@ def make_train(  # pylint: disable=W0102, R0913
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
     if isinstance(env_id, str):
-        env, env_params = gymnax.make(env_id)
-    else:
+        env, env_params = build_env_from_id(env_id, episode_length=episode_length)
+    else:  # env is assumed to be provided already built
         env = env_id
         env_id = None  # To prepare video saving
-
+    num_actions = get_num_actions(env, env_params)
     if log_video:
         if not isinstance(env_id, str):
             if "render" not in dir(env):
@@ -303,6 +306,7 @@ def make_train(  # pylint: disable=W0102, R0913
                     f"Environment {env} has no render method yet video saving is"
                     " enabled."
                 )
+    mode = "gymnax" if isinstance(env, GymnaxEnvironment) else "brax"
 
     @jax.jit
     def train(
@@ -336,9 +340,41 @@ def make_train(  # pylint: disable=W0102, R0913
         # INIT ENV
         rng, reset_key = jax.random.split(rng)
         reset_rng = jax.random.split(reset_key, num_envs)
-        obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
+
+        def reset_env(
+            env: Environment,
+            rng: jax.Array,
+            env_params: Optional[EnvParams] = None,
+        ) -> tuple[jax.Array, EnvState]:
+            if mode == "gymnax":
+                obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(
+                    rng, env_params
+                )
+            else:  # brax
+                env_state = jax.vmap(jax.jit(env.reset), in_axes=(0))(rng)
+                obsv = env_state.obs
+            return obsv, env_state
+
+        def step_env(env, state, action, rng, env_params):
+            if mode == "gymnax":
+                obsv, env_state, reward, done, info = jax.vmap(
+                    env.step, in_axes=(0, 0, 0, None)
+                )(rng, state, action, env_params)
+                done = jnp.float_(done)  # cast to float to unify with brax
+            else:
+                env_state = jax.vmap(env.step, in_axes=(0, 0))(state, action)
+                obsv, reward, done, info = (
+                    env_state.obs,
+                    env_state.reward,
+                    env_state.done,
+                    env_state.info,
+                )
+
+            return obsv, env_state, reward, done, info
+
+        obsv, env_state = reset_env(env, reset_rng, env_params)
         # TRAIN LOOP
-        last_done = jnp.zeros(num_envs, dtype=bool)
+        last_done = jnp.zeros(num_envs, dtype=float)
         timestep = 0
         runner_state = RunnerState(
             actor_state=actor_state,
@@ -418,9 +454,7 @@ def make_train(  # pylint: disable=W0102, R0913
                             (actor state, critic state and env state)\
                             and the Transition buffer
                 """
-
                 # SELECT ACTION
-
                 pi, new_actor_hidden_state = get_pi(
                     runner_state.actor_state,
                     runner_state.actor_state.params,
@@ -453,9 +487,10 @@ def make_train(  # pylint: disable=W0102, R0913
                     # action = pi.sample(seed=action_key).reshape(
                     #     -1,
                     # )
-                    action = pi.sample(seed=action_key)
+                    action = pi.sample(seed=action_key)  # cast to float for consistency
                 else:
                     action = pi.sample(seed=action_key)
+                action = jnp.float_(action)  # cast to float to unify gymnax with brax
                 log_prob = pi.log_prob(action)
 
                 if recurrent:
@@ -468,9 +503,10 @@ def make_train(  # pylint: disable=W0102, R0913
                 # STEP ENV
                 rng, step_key = jax.random.split(rng)
                 rng_step = jax.random.split(step_key, num_envs)
-                obsv, env_state, reward, done, info = jax.vmap(
-                    env.step, in_axes=(0, 0, 0, None)
-                )(rng_step, runner_state.env_state, action, env_params)
+
+                obsv, env_state, reward, done, info = step_env(
+                    env, runner_state.env_state, action, rng_step, env_params
+                )
                 transition = Transition(
                     runner_state.last_done,
                     action,
@@ -508,7 +544,6 @@ def make_train(  # pylint: disable=W0102, R0913
             timestep = runner_state.timestep
             num_update = runner_state.num_update
             # COLLECT BATCH TRAJECTORIES
-
             runner_state, traj_batch = jax.lax.scan(
                 f=_env_step_pre_partial, init=runner_state, xs=None, length=num_steps
             )
@@ -690,9 +725,10 @@ def make_train(  # pylint: disable=W0102, R0913
                             traj_batch.done if recurrent else None,
                             recurrent,
                         )
+
                         # pi = actor_state.apply_fn(actor_params, traj_batch.obs)
                         log_prob = pi.log_prob(
-                            traj_batch.action.reshape(-1, 1)
+                            traj_batch.action.reshape(-1, num_actions)
                             if continuous
                             else traj_batch.action
                         )
@@ -703,11 +739,11 @@ def make_train(  # pylint: disable=W0102, R0913
                         if (num_envs > 1) and continuous:
                             gae = gae.reshape(-1, 1)
                         assert (
-                            ratio.shape == (minibatch_size, 1)
+                            ratio.shape == (minibatch_size, num_actions)
                             if continuous
                             else (minibatch_size,)
                         )
-                        assert ratio.shape == gae.shape, (
+                        assert ratio.shape[0] == gae.shape[0], (
                             f"Mismatch between ratio shape ({ratio.shape}) and gae"
                             f" shape ({gae.shape})"
                         )
@@ -868,100 +904,20 @@ def make_train(  # pylint: disable=W0102, R0913
                 xs=None,
                 length=update_epochs,
             )
-            if log:
-
-                def collect_rollout(rng):
-                    episode_done = False
-                    reward_collected = jnp.zeros(1)
-                    entropy_collected = jnp.zeros(1)
-                    rng, reset_rng = jax.random.split(rng)
-                    obsv, env_state = env.reset(reset_rng, env_params)
-                    initial_actor_hidden_state = (
-                        init_hidden_state(
-                            update_state.actor_hidden_state.shape[-1],
-                            num_envs=1,
-                            rng=rng,
-                        )
-                        if recurrent
-                        else None
-                    )
-
-                    runner_state_eval = (
-                        env_state,
-                        obsv,
-                        rng,
-                        initial_actor_hidden_state,
-                    )
-
-                    def step_eval_env(runner_state_and_traj_batch):
-                        (
-                            runner_state_eval,
-                            episode_done,
-                            reward_collected,
-                            entropy_collected,
-                        ) = runner_state_and_traj_batch
-                        env_state, last_obs, rng, actor_hidden_state = runner_state_eval
-                        # SELECT ACTION
-                        pi, actor_hidden_state = get_pi(
-                            update_state.actor_state,
-                            update_state.actor_state.params,
-                            (
-                                last_obs[jnp.newaxis, :][jnp.newaxis, :]
-                                if recurrent
-                                else last_obs
-                            ),
-                            actor_hidden_state if recurrent else None,
-                            episode_done.reshape(-1, 1) if recurrent else None,
-                            recurrent,
-                        )
-                        rng, action_key = jax.random.split(rng)
-                        action = pi.sample(seed=action_key)
-                        entropy_collected += pi.entropy().mean()
-
-                        if recurrent:
-                            action = action.squeeze(0)[0]
-                        # STEP ENV
-                        rng, step_key = jax.random.split(rng)
-                        obsv, env_state, reward, episode_done, _ = env.step(
-                            step_key,
-                            env_state,
-                            action,
-                            env_params,
-                        )
-                        runner_state_eval = (env_state, obsv, rng, actor_hidden_state)
-                        reward_collected += reward
-                        return (
-                            runner_state_eval,
-                            episode_done,
-                            reward_collected,
-                            entropy_collected,
-                        )
-
-                    def check_done_is_false(runner_state_and_traj_batch):
-                        _, done, _, _ = runner_state_and_traj_batch
-                        return jnp.array_equal(done, jnp.zeros_like(done))
-
-                    _, _, reward_collected, entropy_collected = jax.lax.while_loop(
-                        check_done_is_false,
-                        step_eval_env,
-                        (
-                            runner_state_eval,
-                            episode_done,
-                            reward_collected,
-                            entropy_collected,
-                        ),
-                    )
-                    return reward_collected, entropy_collected
 
             # Evaluation over num eval envs
 
             timestep += num_envs * num_steps
             if log:
-                # TODO : re-allow multiple eval envs
-                # eval_rewards = jax.vmap(collect_rollout, in_axes=0)(
-                #     jax.random.split(update_state.rng, num_eval_envs)
-                # )
-                eval_rewards, eval_entropy = collect_rollout(update_state.rng)
+                eval_rewards, eval_entropy = evaluate(
+                    env,
+                    update_state.actor_state,
+                    num_eval_envs,
+                    update_state.rng,
+                    env_params,
+                    recurrent=recurrent,
+                    lstm_hidden_size=lstm_hidden_size,
+                )
 
                 rewards_to_log = {
                     f"episodic reward/reward-{ii}": reward

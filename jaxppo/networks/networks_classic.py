@@ -17,7 +17,7 @@ from jax import Array
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
 
-from jaxppo.utils import get_num_actions
+from jaxppo.utils import get_num_actions, get_observation_space_shape
 
 ActivationFunction: TypeAlias = Union[
     jax._src.custom_derivatives.custom_jvp, jaxlib.xla_extension.PjitFunction
@@ -188,7 +188,7 @@ def get_adam_tx(
 
 def init_actor_and_critic_state(
     env: Environment,
-    env_params: EnvParams,
+    env_params: Optional[EnvParams],
     actor_network: Network,
     actor_key: jax.Array,
     actor_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
@@ -197,7 +197,8 @@ def init_actor_and_critic_state(
     critic_key: Optional[jax.Array] = None,
 ) -> Tuple[TrainState, Optional[TrainState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
-    init_x = jnp.zeros(env.observation_space(env_params).shape)
+    observation_shape = get_observation_space_shape(env, env_params)
+    init_x = jnp.zeros(observation_shape)
     actor_params = actor_network.init(actor_key, init_x)
     critic_params = critic_network.init(critic_key, init_x)
     actor = TrainState.create(

@@ -34,10 +34,18 @@ tox = "^4.6.4"
 coverage = {extras = ["toml"], version = "^7.4.4"}
 pygame = "^2.5.2"
 isort = "^5.13.2"
+pytest-mock = "^3.14.0"
+mock = "^5.1.0"
 
 
 [tool.poetry.group.render.dependencies]
 moviepy = "^1.0.3"
+
+
+[tool.poetry.group.mujoco.dependencies]
+brax = "^0.10.3"
+mujoco = "^3.1.4"
+mujoco-mjx = "^3.1.4"
 
 [[tool.poetry.source]]
 name = "pypi"
