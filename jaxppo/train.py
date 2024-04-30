@@ -21,12 +21,12 @@ from jaxppo.networks.networks import (
 )
 from jaxppo.types_rnn import BatchInfo, HiddenState
 from jaxppo.utils import (
-    GymnaxEnvironment,
     annealed_linear_schedule,
-    build_env_from_id,
+    check_env_is_gymnax,
     check_update_frequency,
     get_num_actions,
     get_parameterized_schedule,
+    prepare_env,
     save_model,
 )
 from jaxppo.video import save_video_to_wandb
@@ -128,19 +128,6 @@ def _calculate_gae(
             target = reward - average_reward + next_value
             delta = target - value
             gae = delta  # + gae * gae_lambda
-            # jax.debug.print(
-            #     (
-            #         "reward {x} avg reward {y} delta {z} value {v} next_value {n} obs"
-            #         " {o} gae {g}"
-            #     ),
-            #     x=reward,
-            #     y=average_reward,
-            #     z=delta,
-            #     v=value,
-            #     n=next_value,
-            #     o=transition.obs,
-            #     g=gae,
-            # )
         else:
             next_state_is_non_terminal = (
                 1.0 - done if next_done is None else 1.0 - next_done
@@ -259,6 +246,7 @@ def make_train(  # pylint: disable=W0102, R0913
     average_reward_mode: bool = False,
     window_size: int = 32,
     episode_length: int = Optional[None],
+    render_env_id: Optional[str] = None,
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -293,12 +281,11 @@ def make_train(  # pylint: disable=W0102, R0913
     """
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
-    if isinstance(env_id, str):
-        env, env_params = build_env_from_id(env_id, episode_length=episode_length)
-    else:  # env is assumed to be provided already built
-        env = env_id
-        env_id = None  # To prepare video saving
+    env, env_params, env_id = prepare_env(
+        env_id, continuous, gamma, episode_length, env_params=env_params
+    )
     num_actions = get_num_actions(env, env_params)
+    mode = "gymnax" if check_env_is_gymnax(env) else "brax"
     if log_video:
         if not isinstance(env_id, str):
             if "render" not in dir(env):
@@ -306,7 +293,10 @@ def make_train(  # pylint: disable=W0102, R0913
                     f"Environment {env} has no render method yet video saving is"
                     " enabled."
                 )
-    mode = "gymnax" if isinstance(env, GymnaxEnvironment) else "brax"
+        if mode == "brax" and render_env_id is None:
+            raise ValueError(
+                "Video saving is enabled in brax but no render env id was provided."
+            )
 
     @jax.jit
     def train(
@@ -483,14 +473,15 @@ def make_train(  # pylint: disable=W0102, R0913
                 # pi = runner_state.actor_state.apply_fn(
                 #     runner_state.actor_state.params, runner_state.last_obs
                 # )
-                if not recurrent:
-                    # action = pi.sample(seed=action_key).reshape(
-                    #     -1,
-                    # )
-                    action = pi.sample(seed=action_key)  # cast to float for consistency
-                else:
-                    action = pi.sample(seed=action_key)
-                action = jnp.float_(action)  # cast to float to unify gymnax with brax
+                # if not recurrent:
+                #     # action = pi.sample(seed=action_key).reshape(
+                #     #     -1,
+                #     # )
+                #     action = pi.sample(seed=action_key)  # cast to float for consistency
+                # else:
+                action = jnp.float_(
+                    pi.sample(seed=action_key)
+                )  # cast to float to unify gymnax with brax
                 log_prob = pi.log_prob(action)
 
                 if recurrent:
@@ -949,7 +940,7 @@ def make_train(  # pylint: disable=W0102, R0913
             if log_video:
                 # Save model and video if needed
                 _save_video_to_wandb = partial(
-                    save_video_to_wandb, env_id, env, recurrent
+                    save_video_to_wandb, render_env_id, env, recurrent
                 )
 
                 def save_video_callback(update_state, params):
@@ -957,10 +948,12 @@ def make_train(  # pylint: disable=W0102, R0913
                         _save_video_to_wandb, update_state, update_state.rng, params
                     )
 
+                record_video_flag = check_update_frequency(
+                    runner_state.num_update, num_updates, video_log_frequency
+                )
+                jax.debug.print("{x}", x=record_video_flag)
                 jax.lax.cond(
-                    check_update_frequency(
-                        runner_state.num_update, num_updates, video_log_frequency
-                    ),
+                    record_video_flag,
                     save_video_callback,
                     lambda update_state, params: None,
                     update_state,

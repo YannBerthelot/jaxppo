@@ -2,7 +2,6 @@
 
 from typing import Optional
 
-import gymnax
 import jax
 import jax.numpy as jnp
 from gymnax.environments.environment import (  # TODO : mix brax here
@@ -13,15 +12,13 @@ from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
 from jaxppo.config import PPOConfig
-
-# from jaxppo.wrappers import ClipAction, NormalizeVecObservation, NormalizeVecReward
 from jaxppo.evaluate import evaluate
 from jaxppo.networks.networks import get_pi
 from jaxppo.networks.networks import predict_probs as network_predict_probs
 from jaxppo.networks.networks import predict_value as network_predict_value
 from jaxppo.train import init_agent, make_train
 from jaxppo.types_rnn import HiddenState
-from jaxppo.utils import build_env_from_id, load_model
+from jaxppo.utils import build_env_from_id, load_model, prepare_env
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
 
 
@@ -60,6 +57,7 @@ class PPO:
         average_reward: bool = False,
         window_size: int = 32,
         episode_length: Optional[int] = None,
+        render_env_id: Optional[str] = None,
     ) -> None:
         """
         PPO Agent that allows simple training and testing
@@ -118,18 +116,15 @@ class PPO:
             average_reward=average_reward,
             window_size=window_size,
             episode_length=episode_length,
+            render_env_id=render_env_id,
         )
         key = random.PRNGKey(seed)
         num_updates = total_timesteps // num_steps // num_envs
-        if isinstance(env_id, str):
-            env, env_params = build_env_from_id(env_id)
-        else:  # env is assumed to be provided already built
-            env = env_id
-            env_id = None  # To prepare video saving
-        # if continuous:
-        #     env = ClipAction(env, low=0.0, high=1.0)
-        #     env = NormalizeVecObservation(env)
-        #     env = NormalizeVecReward(env, gamma)
+
+        env, env_params, env_id = prepare_env(
+            env_id, continuous, gamma, env_params=env_params
+        )  # TODO : make it simpler as it is only used for initializing the networks
+
         (
             self._actor_state,
             self._critic_state,
@@ -210,6 +205,7 @@ class PPO:
             average_reward_mode=self.config.average_reward,
             window_size=self.config.window_size,
             episode_length=self.config.episode_length,
+            render_env_id=self.config.render_env_id,
         )
 
         runner_state = train_jit(key)
@@ -345,12 +341,26 @@ class PPO:
             wandb_test_log(episodic_reward_sum)
 
 
+env_dict = {
+    "HalfCheetah-v4": "halfcheetah",
+    "Hopper-v4": "hopper",
+    "Humanoid-v4": "humanoid",
+    "HumanoidStandup-v4": "humanoidstandup",
+    "InvertedDoublePendulum-v4": "inverted_double_pendulum",
+    "InvertedPendulum-v4": "inverted_pendulum",
+    "Pusher-v4": "pusher",
+    "Reacher-v4": "reacher",
+    "Swimmer-v4": "swimmer",
+    "Walker2d-v4": "walker",
+}
+
 if __name__ == "__main__":
     import wandb
 
+    true_env_id = "HalfCheetah-v4"
     num_envs = 4
     num_steps = 2048
-    env_id = "ant"
+    env_id = env_dict[true_env_id]
     logging_config = LoggingConfig("Continuous PPO", "test", config={})
     init_logging(logging_config=logging_config, folder=None)
     sb3_batch_size = 64
@@ -376,8 +386,9 @@ if __name__ == "__main__":
         log_video=True,
         video_log_frequency=None,
         continuous=True,
-        average_reward=True,
-        window_size=2048,
+        average_reward=False,
+        # window_size=2048,
+        render_env_id=true_env_id,
         # lstm_hidden_size=16,
     )
 

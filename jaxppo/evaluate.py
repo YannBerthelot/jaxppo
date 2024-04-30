@@ -115,12 +115,13 @@ def evaluate(
             env_params,
         )
         entropy_collected += (
-            entropy[:, 0] * (1 - done)
+            entropy.mean() * (1 - done)
         ).mean()  # only add entropies for unfinished envs
         done = done | jnp.int8(new_done)
         rewards = rewards + (
             reward * (1 - done)
         )  # only add rewards for unfinished envs
+        # int("{x} {y} {z}", x=rewards, y=reward, z=done)
         return (rewards, rng, obs, done, hidden, state, entropy_collected)
 
     def env_not_done(carry):

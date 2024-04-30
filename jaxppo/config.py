@@ -46,6 +46,7 @@ class PPOConfig(BaseModel):
     average_reward: bool = False
     window_size: int = 32
     episode_length: Optional[int] = None
+    render_env_id: Optional[str] = None
 
     @field_validator("env_id")
     @classmethod

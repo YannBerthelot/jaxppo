@@ -33,7 +33,6 @@ def save_video_to_wandb(
         obs_render, state = env.reset(reset_key)
         screen = None
         clock = None
-
     done = False
     frames = []
     FPS = 50
@@ -59,7 +58,7 @@ def save_video_to_wandb(
 
         action = pi.sample(seed=action_key)
         if isinstance(env_id, str):
-            obs_render, _, terminated, truncated, _ = env_render.step(action.item())
+            obs_render, _, terminated, truncated, _ = env_render.step(action)
             done = terminated | truncated
             new_frames = env_render.render()
             frames.append(new_frames)
@@ -68,6 +67,5 @@ def save_video_to_wandb(
             frames, screen, clock = env_render.render(
                 screen, state, params, frames, clock
             )
-
     frames_correct_order = np.array(frames).swapaxes(1, 3).swapaxes(2, 3)
     wandb.log({"video": wandb.Video(frames_correct_order, fps=FPS)})

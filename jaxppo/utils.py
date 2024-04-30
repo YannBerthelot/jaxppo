@@ -17,7 +17,7 @@ from gymnax.environments.environment import Environment as GymnaxEnvironment
 from jax import random
 
 from jaxppo.wandb_logging import log_model
-from jaxppo.wrappers import LogWrapper
+from jaxppo.wrappers import BraxWrapper, GymnaxWrapper, LogWrapper, get_wrappers
 
 try:
     from brax import envs as brax_envs
@@ -73,12 +73,22 @@ def sample_obs_space(
         raise ValueError(f"Unsupported environment type {type(env)}")
 
 
+def check_env_is_brax(env):
+    return isinstance(env, BraxEnvironment) or issubclass(env.__class__, BraxWrapper)
+
+
+def check_env_is_gymnax(env):
+    return isinstance(env, GymnaxEnvironment) or issubclass(
+        env.__class__, GymnaxWrapper
+    )
+
+
 def get_observation_space_shape(
     env: gym.Env | SyncVectorEnv | Environment | LogWrapper,
     env_params: Optional[EnvParams],
 ) -> int:
     if brax_envs is not None:
-        if isinstance(env, BraxEnvironment):
+        if check_env_is_brax(env):
             return env.observation_size
     observation_space = env.observation_space(env_params)
     if isinstance(
@@ -107,7 +117,7 @@ def get_num_actions(
 
     # TODO : add continuous
     if brax_envs is not None:
-        if isinstance(env, BraxEnvironment):
+        if check_env_is_brax(env):
             return env.action_size
     action_space = env.action_space(params)
     if isinstance(
@@ -211,12 +221,27 @@ def check_update_frequency(
     return cond
 
 
+env_dict = {
+    "HalfCheetah-v4": "halfcheetah",
+    "Hopper-v4": "hopper",
+    "Humanoid-v4": "humanoid",
+    "HumanoidStandup-v4": "humanoidstandup",
+    "InvertedDoublePendulum-v4": "inverted_double_pendulum",
+    "InvertedPendulum-v4": "inverted_pendulum",
+    "Pusher-v4": "pusher",
+    "Reacher-v4": "reacher",
+    "Swimmer-v4": "swimmer",
+    "Walker2d-v4": "walker",
+    "Ant-v4": "ant",
+}
+
+
 def build_env_from_id(env_id: str, **kwargs) -> tuple[Environment, Optional[EnvParams]]:
     if env_id in gymnax.registered_envs:
         env, env_params = gymnax.make(env_id)
         return env, env_params
     if brax_envs is not None:
-        if env_id in dir(brax_envs):
+        if env_id in list(env_dict.values()):
             return brax_envs.create(env_id, **kwargs), None
         else:
             raise ValueError(f"Environment {env_id} not found in gymnax or mjx")
@@ -225,3 +250,26 @@ def build_env_from_id(env_id: str, **kwargs) -> tuple[Environment, Optional[EnvP
             f"The env id ({env_id}) provided is not recognized as a valid gymnax env,"
             " cannot check for Mujoco as mjx is not installed."
         )
+
+
+def prepare_env(
+    env_id,
+    continuous,
+    gamma,
+    episode_length: Optional[int] = None,
+    env_params: Optional[EnvParams] = None,
+):
+    if isinstance(env_id, str):
+        env, env_params = build_env_from_id(
+            env_id, episode_length=1000 if episode_length is None else episode_length
+        )
+    else:  # env is assumed to be provided already built
+        env = env_id
+        env_id = None  # To prepare video saving
+    if continuous:
+        mode = "gymnax" if isinstance(env, GymnaxEnvironment) else "brax"
+        ClipAction, NormalizeVecObservation, NormalizeVecReward = get_wrappers(mode)
+        # env = ClipAction(env, low=-1.0, high=1.0)
+        env = NormalizeVecObservation(env)
+        # env = NormalizeVecReward(env, gamma)
+    return env, env_params, env_id
