@@ -388,7 +388,6 @@ if __name__ == "__main__":
         continuous=True,
         average_reward=False,
         # window_size=2048,
-        render_env_id=true_env_id,
         # lstm_hidden_size=16,
     )
 

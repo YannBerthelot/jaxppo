@@ -293,10 +293,6 @@ def make_train(  # pylint: disable=W0102, R0913
                     f"Environment {env} has no render method yet video saving is"
                     " enabled."
                 )
-        if mode == "brax" and render_env_id is None:
-            raise ValueError(
-                "Video saving is enabled in brax but no render env id was provided."
-            )
 
     @jax.jit
     def train(
@@ -936,7 +932,6 @@ def make_train(  # pylint: disable=W0102, R0913
                 critic_hidden_state=runner_state.critic_hidden_state,
                 last_done=runner_state.last_done,
             )
-
             if log_video:
                 # Save model and video if needed
                 _save_video_to_wandb = partial(
@@ -951,7 +946,6 @@ def make_train(  # pylint: disable=W0102, R0913
                 record_video_flag = check_update_frequency(
                     runner_state.num_update, num_updates, video_log_frequency
                 )
-                jax.debug.print("{x}", x=record_video_flag)
                 jax.lax.cond(
                     record_video_flag,
                     save_video_callback,
