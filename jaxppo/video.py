@@ -28,6 +28,18 @@ def get_tracking_camera():
     return camera
 
 
+def get_all_non_none_keys(pipeline_state):
+    keys = []
+    for key in pipeline_state.__dataclass_fields__.keys():
+        val = pipeline_state.__dict__[key]
+        if val is not None:
+            if isinstance(val, jnp.ndarray):
+                keys.append(key)
+            else:
+                keys += get_all_non_none_keys(val)
+    return keys
+
+
 def save_video_to_wandb(
     env_id: Optional[str],
     env: Environment,
@@ -58,21 +70,10 @@ def save_video_to_wandb(
                 state.info,
             )
 
+            non_None_keys = get_all_non_none_keys(state.pipeline_state)
+
     frames = []
     max_iteration = 1000
-
-    def get_all_non_none_keys(pipeline_state):
-        keys = []
-        for key in pipeline_state.__dataclass_fields__.keys():
-            val = pipeline_state.__dict__[key]
-            if val is not None:
-                if isinstance(val, jnp.ndarray):
-                    keys.append(key)
-                else:
-                    keys += get_all_non_none_keys(val)
-        return keys
-
-    non_None_keys = get_all_non_none_keys(state.pipeline_state)
 
     def flatten_state(pipeline_state):
         vals = [
@@ -140,10 +141,15 @@ def save_video_to_wandb(
         # This assumes that the restored_dict contains all the required arguments
         return pipeline_state_class(**restored_dict)
 
-    trajectory = (
-        jnp.zeros((max_iteration, get_flattened_shape_of_state(state.pipeline_state)))
-        * jnp.nan
-    )
+    if check_env_is_brax(env_render):
+        trajectory = (
+            jnp.zeros(
+                (max_iteration, get_flattened_shape_of_state(state.pipeline_state))
+            )
+            * jnp.nan
+        )
+    else:
+        trajectory = None
 
     FPS = 50
     actor_hidden_state = (
@@ -214,11 +220,14 @@ def save_video_to_wandb(
             (i, done, state, obs_render, rng, actor_hidden_state, trajectory),
         )
 
-        trajectory = [
-            restore_state(state.pipeline_state, frame) for frame in trajectory
-        ]
+        if check_env_is_brax(env_render):
+            trajectory = [
+                restore_state(state.pipeline_state, frame) for frame in trajectory
+            ]
 
-        frames = env_render.render(trajectory=trajectory, camera=get_tracking_camera())
+            frames = env_render.render(
+                trajectory=trajectory, camera=get_tracking_camera()
+            )
 
     else:
         done = False
@@ -237,7 +246,7 @@ def save_video_to_wandb(
 
             action = pi.sample(seed=action_key)
 
-            obs_render, _, terminated, truncated, _ = env_render.step(action)
+            obs_render, _, terminated, truncated, _ = env_render.step(action.item())
             done = terminated | truncated
             new_frames = env_render.render()
             frames.append(new_frames)

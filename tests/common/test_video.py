@@ -65,7 +65,7 @@ def test_save_video():
 
     gif_found = False
     for file in files:
-        if ".gif" in str(file.__repr__()):
+        if ".gif" in str(file.__repr__()) or ".mp4" in str(file.__repr__()):
             gif_found = True
             break
     assert gif_found
