@@ -87,7 +87,7 @@ def destroy_fake_run(run_id, folder: str = "wandb_fake") -> None:
     shutil.rmtree(folder)
 
 
-@pytest.mark.skipif(not is_wandb_logged_in(), reason="No wandb user logged in")
+@pytest.mark.skipif(os.getenv("GITHUB_ACTIONS"), reason="Not possible on CI atm")
 def test_split_run():
     """Checks that the merged-run is split into the expected individual runs."""
     fake_folder = "wandb_fake"
