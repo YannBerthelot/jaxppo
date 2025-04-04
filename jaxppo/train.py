@@ -181,6 +181,7 @@ def init_agent(  # pylint: disable=W0102, R0913
         lstm_hidden_size=lstm_hidden_size,
         continuous=continuous,
     )
+
     if anneal_lr:
         scheduler = get_parameterized_schedule(
             linear_scheduler=annealed_linear_schedule,
@@ -281,8 +282,8 @@ def make_train(  # pylint: disable=W0102, R0913
     """
     num_updates = total_timesteps // num_steps // num_envs
     minibatch_size = num_envs * num_steps // num_minibatches
-    env, env_params, env_id = prepare_env(
-        env_id, continuous, gamma, episode_length, env_params=env_params
+    env, env_params, env_id, continuous = prepare_env(
+        env_id, episode_length, env_params=env_params
     )
     num_actions = get_num_actions(env, env_params)
     mode = "gymnax" if check_env_is_gymnax(env) else "brax"
@@ -475,9 +476,11 @@ def make_train(  # pylint: disable=W0102, R0913
                 #     # )
                 #     action = pi.sample(seed=action_key)  # cast to float for consistency
                 # else:
-                action = jnp.float_(
-                    pi.sample(seed=action_key)
+                action = pi.sample(
+                    seed=action_key
                 )  # cast to float to unify gymnax with brax
+                if continuous:
+                    action = jnp.float_(action)
                 log_prob = pi.log_prob(action)
 
                 if recurrent:

@@ -2,12 +2,12 @@ from typing import Optional
 
 import jax
 import jax.numpy as jnp
-from gymnax.environments.environment import Environment as GymnaxEnvironment
 from gymnax.environments.environment import EnvParams, EnvState
 
 from jaxppo.networks.networks import get_pi
 from jaxppo.networks.networks_RNN import init_hidden_state
 from jaxppo.types_rnn import HiddenState
+from jaxppo.utils import check_env_is_gymnax
 
 
 def evaluate(
@@ -22,7 +22,7 @@ def evaluate(
     """Evaluate the agent over n_episodes (using seed for rng) and log the episodic\
               returns"""
     key = rng
-    mode = "gymnax" if isinstance(env, GymnaxEnvironment) else "brax"
+    mode = "gymnax" if check_env_is_gymnax(env) else "brax"
     key, init_hidden_key, reset_key = jax.random.split(key, 3)
     init_hidden_keys = jax.random.split(init_hidden_key, num_episodes)
     reset_keys = jax.random.split(reset_key, num_episodes)

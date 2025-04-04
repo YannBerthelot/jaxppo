@@ -1,6 +1,5 @@
 from typing import Any, Optional, TypeAlias
 
-import chex
 import gymnasium as gym
 import imageio
 import jax
@@ -9,13 +8,16 @@ import mujoco
 import numpy as np
 import wandb
 from brax.generalized.base import State
-from flax.struct import dataclasses
 from gymnax import EnvParams
 from gymnax.environments.environment import Environment
 
 from jaxppo.networks.networks import get_pi
 from jaxppo.networks.networks_RNN import init_hidden_state
-from jaxppo.utils import check_env_is_brax, check_env_is_gymnax
+from jaxppo.utils import (
+    check_env_is_brax,
+    check_env_is_gymnax,
+    check_if_environment_has_continuous_actions,
+)
 
 UpdateState: TypeAlias = Any
 
@@ -40,30 +42,37 @@ def get_all_non_none_keys(pipeline_state):
     return keys
 
 
+def check_attribute_exists(obj: Any, attr: str) -> bool:
+    try:
+        obj.__getattr__(attr)
+    except AttributeError:
+        return False
+    else:
+        return True
+
+
 def save_video_to_wandb(
     env_id: Optional[str],
     env: Environment,
     recurrent: bool,
     update_state: UpdateState,
     rng: jax.Array,
-    params: EnvParams,
+    params: Optional[EnvParams] = None,
 ) -> None:
     """Generate an episode using the current agent state and log its video to wandb"""
 
     done = False
-    if env_id is not None:
-        env_render = gym.make(env_id, render_mode="rgb_array")
-        obs_render, _ = env_render.reset(seed=42)
-    else:
+
+    continuous = check_if_environment_has_continuous_actions(env)
+    if check_attribute_exists(env, "render"):
         env_render = env
         rng, reset_key = jax.random.split(rng)
         if check_env_is_gymnax(env_render):
             obs_render, state = env.reset(reset_key)
-            screen = None
-            clock = None
+            frames = []
         else:
             state = env.reset(reset_key)
-            obs_render, reward, done, info = (
+            obs_render, _, done, _ = (
                 state.obs,
                 state.reward,
                 state.done,
@@ -71,6 +80,19 @@ def save_video_to_wandb(
             )
 
             non_None_keys = get_all_non_none_keys(state.pipeline_state)
+
+    elif env_id is not None:
+        env_render = gym.make(env_id, render_mode="rgb_array")
+        obs_render, _ = env_render.reset(seed=42)
+    else:
+        raise ValueError(
+            f"The environment {env} has no rendering, and the fallback env_id"
+            " was not provided"
+        )
+
+    if env_id is not None:
+        env_render = gym.make(env_id, render_mode="rgb_array")
+        obs_render, _ = env_render.reset(seed=42)
 
     frames = []
     max_iteration = 1000
@@ -117,7 +139,6 @@ def save_video_to_wandb(
                     idx += np.prod(shape)
                 else:
                     # For nested dataclass fields, call restore_state recursively
-                    nested_class = field.type
                     restored_dict[key] = restore_state(
                         getattr(pipeline_state, key),
                         flattened_state[idx:],
@@ -151,7 +172,6 @@ def save_video_to_wandb(
     else:
         trajectory = None
 
-    FPS = 50
     actor_hidden_state = (
         init_hidden_state(
             update_state.actor_hidden_state.shape[-1], num_envs=1, rng=rng
@@ -165,7 +185,9 @@ def save_video_to_wandb(
     if check_env_is_gymnax(env_render) or check_env_is_brax(env_render):
         # JAX-based loop for Gymnax and Brax
         def body_fn(carry):
-            i, done, state, obs_render, rng, actor_hidden_state, trajectory = carry
+            i, done, state, obs_render, rng, actor_hidden_state, trajectory, frames = (
+                carry
+            )
             # Perform the actions inside the loop
 
             rng, action_key = jax.random.split(rng)
@@ -184,12 +206,12 @@ def save_video_to_wandb(
                 obs_render, state, _, done, _ = env_render.step(
                     rng, state, action, params
                 )
-                frames, screen, clock = env_render.render(
-                    screen, state, params, frames, clock
+                frames, screen, _ = env_render.render(
+                    screen, state, params, frames, None
                 )
             elif check_env_is_brax(env_render):  # brax
                 state = env_render.step(state, action)
-                obs_render, reward, done, info = (
+                obs_render, _, done, _ = (
                     state.obs,
                     state.reward,
                     state.done,
@@ -207,17 +229,18 @@ def save_video_to_wandb(
                 rng,
                 actor_hidden_state,
                 trajectory,
+                frames,
             )
 
         def cond_fn(carry):
-            i, done, state, obs_render, rng, actor_hidden_state, trajectory = carry
+            done = carry[1]
             return jnp.logical_not(done)
 
         # Using jax.lax.while_loop
-        _, done, _, _, _, _, trajectory = jax.lax.while_loop(
+        _, done, _, _, _, _, trajectory, frames = jax.lax.while_loop(
             cond_fn,
             body_fn,
-            (i, done, state, obs_render, rng, actor_hidden_state, trajectory),
+            (i, done, state, obs_render, rng, actor_hidden_state, trajectory, frames),
         )
 
         if check_env_is_brax(env_render):
@@ -235,6 +258,7 @@ def save_video_to_wandb(
         while not done:
             done_jax = jnp.array(done) if isinstance(done, bool) else done
             rng, action_key = jax.random.split(rng)
+
             pi, actor_hidden_state = get_pi(
                 update_state.actor_state,
                 update_state.actor_state.params,
@@ -245,8 +269,8 @@ def save_video_to_wandb(
             )
 
             action = pi.sample(seed=action_key)
-
-            obs_render, _, terminated, truncated, _ = env_render.step(action.item())
+            action = action if continuous else action.item()
+            obs_render, _, terminated, truncated, _ = env_render.step(action)
             done = terminated | truncated
             new_frames = env_render.render()
             frames.append(new_frames)

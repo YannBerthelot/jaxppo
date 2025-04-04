@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 import wandb
 from brax import envs
-from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
 
 from jaxppo.ppo import PPO
 from jaxppo.train import Transition, _calculate_gae, make_train
 from jaxppo.wandb_logging import LoggingConfig
+from jaxppo.wrappers import FlattenObservationWrapper  # pylint: disable=C0411
 from tests.classical.mock_brax import mock_reset, mock_step
 
 

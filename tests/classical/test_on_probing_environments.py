@@ -43,7 +43,6 @@ def init_agent(
     num_envs: int = 1,
     seed: Optional[int] = 42,  # pylint: disable=W0613
     budget: int = int(1e3),
-    continuous: bool = False,
 ) -> AgentType:
     """
     Initialize your agent on a given env while also setting the discount factor.
@@ -69,7 +68,6 @@ def init_agent(
         env_params=env_params,
         gamma=gamma,
         learning_rate=learning_rate,
-        continuous=continuous,
     )
     return agent
 
@@ -111,7 +109,6 @@ def init_agent_continuous(
         gamma=gamma,
         learning_rate=learning_rate,
         ent_coef=0.0,
-        continuous=True,
     )
     return agent
 

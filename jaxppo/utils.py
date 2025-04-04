@@ -7,10 +7,13 @@ from typing import Any, Callable, Optional, Tuple, TypeAlias, cast
 
 import gymnasium as gym
 import gymnax
+import gymnax.wrappers
 import jax
 import jax.numpy as jnp
 from flax.serialization import from_state_dict, to_state_dict
 from flax.training.train_state import TrainState
+from gymnasium import Env as GymnasiumEnvironment
+from gymnasium import Wrapper as GymnasiumWrapper
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from gymnax import EnvParams
 from gymnax.environments.environment import Environment as GymnaxEnvironment
@@ -22,11 +25,16 @@ from jaxppo.wrappers import BraxWrapper, GymnaxWrapper, LogWrapper, get_wrappers
 try:
     from brax import envs as brax_envs
 
-    BraxEnvironment = brax_envs.Env | brax_envs.wrappers.training.AutoResetWrapper
-    Environment: TypeAlias = GymnaxEnvironment | BraxEnvironment
+    BraxEnvironment: TypeAlias = (
+        brax_envs.Env | brax_envs.wrappers.training.AutoResetWrapper
+    )
 except ImportError:
     brax_envs = None
+
+if brax_envs is None:
     Environment: TypeAlias = GymnaxEnvironment
+else:
+    Environment: TypeAlias = GymnaxEnvironment | BraxEnvironment
 
 
 def get_env_action_shape(
@@ -78,8 +86,16 @@ def check_env_is_brax(env):
 
 
 def check_env_is_gymnax(env):
-    return isinstance(env, GymnaxEnvironment) or issubclass(
-        env.__class__, GymnaxWrapper
+    return (
+        isinstance(env, GymnaxEnvironment)
+        or issubclass(env.__class__, GymnaxWrapper)
+        or issubclass(env.__class__, gymnax.wrappers.purerl.GymnaxWrapper)
+    )
+
+
+def check_env_is_gymnasium(env):
+    return isinstance(env, GymnasiumEnvironment) or issubclass(
+        env.__class__, GymnasiumWrapper
     )
 
 
@@ -252,10 +268,21 @@ def build_env_from_id(env_id: str, **kwargs) -> tuple[Environment, Optional[EnvP
         )
 
 
+def get_action_space(env):
+    if check_env_is_gymnax(env):
+        return env.action_space()
+    elif check_env_is_gymnasium(env):
+        return env.action_space
+
+
+def check_if_environment_has_continuous_actions(env):
+    if check_env_is_brax(env):
+        return True
+    return not ("Discrete" in str(get_action_space(env)))
+
+
 def prepare_env(
     env_id,
-    continuous,
-    gamma,
     episode_length: Optional[int] = None,
     env_params: Optional[EnvParams] = None,
 ):
@@ -265,11 +292,16 @@ def prepare_env(
         )
     else:  # env is assumed to be provided already built
         env = env_id
-        env_id = None  # To prepare video saving
+    continuous = check_if_environment_has_continuous_actions(env)
     if continuous:
-        mode = "gymnax" if isinstance(env, GymnaxEnvironment) else "brax"
+        if check_env_is_gymnax(env):
+            mode = "gymnax"
+        elif check_env_is_brax(env):
+            mode = "brax"
+        else:
+            raise ValueError(f"Unsupported env {env}")
         ClipAction, NormalizeVecObservation, NormalizeVecReward = get_wrappers(mode)
         # env = ClipAction(env, low=-1.0, high=1.0)
         env = NormalizeVecObservation(env)
         # env = NormalizeVecReward(env, gamma)
-    return env, env_params, env_id
+    return env, env_params, env_id, continuous

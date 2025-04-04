@@ -53,7 +53,6 @@ class PPO:
         save_frequency: Optional[int] = None,
         lstm_hidden_size: Optional[int] = None,
         seed: int = 42,
-        continuous: bool = False,
         average_reward: bool = False,
         window_size: int = 32,
         episode_length: Optional[int] = None,
@@ -86,6 +85,14 @@ class PPO:
               Defaults to 0.01.
         log (bool, optional): Wether or not to log training using wandb.
         """
+
+        key = random.PRNGKey(seed)
+        num_updates = total_timesteps // num_steps // num_envs
+
+        env, env_params, env_id, continuous = prepare_env(
+            env_id, env_params=env_params
+        )  # TODO : make it simpler as it is only used for initializing the networks
+
         self.config = PPOConfig(
             total_timesteps=total_timesteps,
             num_steps=num_steps,
@@ -118,12 +125,6 @@ class PPO:
             episode_length=episode_length,
             render_env_id=render_env_id,
         )
-        key = random.PRNGKey(seed)
-        num_updates = total_timesteps // num_steps // num_envs
-
-        env, env_params, env_id = prepare_env(
-            env_id, continuous, gamma, env_params=env_params
-        )  # TODO : make it simpler as it is only used for initializing the networks
 
         (
             self._actor_state,
@@ -360,7 +361,7 @@ if __name__ == "__main__":
     true_env_id = "HalfCheetah-v4"
     num_envs = 4
     num_steps = 2048
-    env_id = env_dict[true_env_id]
+    env_id = env_dict[true_env_id] if true_env_id in env_dict.keys() else true_env_id
     logging_config = LoggingConfig("Continuous PPO", "test", config={})
     init_logging(logging_config=logging_config, folder=None)
     sb3_batch_size = 64
@@ -385,8 +386,8 @@ if __name__ == "__main__":
         save=True,
         log_video=True,
         video_log_frequency=None,
-        continuous=True,
         average_reward=False,
+        render_env_id=true_env_id,
         # window_size=2048,
         # lstm_hidden_size=16,
     )

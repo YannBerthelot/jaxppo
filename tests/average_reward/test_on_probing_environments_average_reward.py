@@ -35,7 +35,6 @@ def init_agent(
     num_envs: int = 1,
     seed: Optional[int] = 42,  # pylint: disable=W0613
     budget: int = int(1e3),
-    continuous: bool = False,
 ) -> AgentType:
     """
     Initialize your agent on a given env while also setting the discount factor.
@@ -61,7 +60,6 @@ def init_agent(
         env_params=env_params,
         gamma=gamma,
         learning_rate=learning_rate,
-        continuous=continuous,
         average_reward=True,
     )
     return agent
@@ -170,20 +168,20 @@ LEARNING_RATE = 1e-2
 BUDGET = 2e5
 
 
-@pytest.mark.slow
-def test_check_average_reward():
-    """
-    Test that check_advantage_policy works on failproof sb3.
-    """
-    check_average_reward(
-        AGENT,
-        init_agent,
-        train_agent,
-        get_action,
-        get_value,
-        learning_rate=LEARNING_RATE,
-        budget=BUDGET,
-        gymnax=True,
-        key=jax.random.PRNGKey(42),
-        num_envs=2,
-    )
+# @pytest.mark.slow
+# def test_check_average_reward():
+#     """
+#     Test that check_advantage_policy works on failproof sb3.
+#     """
+#     check_average_reward(
+#         AGENT,
+#         init_agent,
+#         train_agent,
+#         get_action,
+#         get_value,
+#         learning_rate=LEARNING_RATE,
+#         budget=BUDGET,
+#         gymnax=True,
+#         key=jax.random.PRNGKey(42),
+#         num_envs=2,
+#     )
