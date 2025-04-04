@@ -3,11 +3,12 @@
 import json
 from typing import Any, NoReturn, Optional, Sequence
 
-from gymnax.environments.environment import Environment
-from gymnax.wrappers.purerl import GymnaxWrapper
+# from gymnax.environments.environment import Environment
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
+from jaxppo.utils import Environment, GymnaxEnvironment, check_env_is_gymnax
 from jaxppo.wandb_logging import LoggingConfig
+from jaxppo.wrappers import GymnaxWrapper
 
 
 class PPOConfig(BaseModel):
@@ -31,7 +32,7 @@ class PPOConfig(BaseModel):
     clip_coef_vf: Optional[float] = 0.2
     ent_coef: float = 0.01
     logging_config: Optional[LoggingConfig] = None
-    num_episode_test: int = 20
+    num_episode_test: int = 2
     anneal_lr: bool = True
     max_grad_norm: Optional[float] = 0.5
     advantage_normalization: bool = True
@@ -42,6 +43,10 @@ class PPOConfig(BaseModel):
     save_frequency: Optional[int] = None
     lstm_hidden_size: Optional[int] = None
     continuous: bool = False
+    average_reward: bool = False
+    window_size: int = 32
+    episode_length: Optional[int] = None
+    render_env_id: Optional[str] = None
 
     @field_validator("env_id")
     @classmethod
@@ -52,12 +57,14 @@ class PPOConfig(BaseModel):
         env_params = info.data["env_params"]
         if isinstance(env_id, str):
             return env_id
-        elif issubclass(env_id.__class__, Environment) or issubclass(
-            env_id.__class__, GymnaxWrapper
-        ):
-            if env_params is None:
+        elif check_env_is_gymnax(env_id) or isinstance(env_id, Environment):
+            if env_params is None and issubclass(
+                env_id.__class__, (GymnaxEnvironment, GymnaxWrapper)
+            ):
                 raise ValueError("Missing EnvParams for pre-defined env")
-            if "EnvParams" not in str(env_params.__class__):
+            if "EnvParams" not in str(env_params.__class__) and issubclass(
+                env_id.__class__, (GymnaxEnvironment, GymnaxWrapper)
+            ):
                 raise ValueError(
                     f"env_params should be of a EnvParams type, got {type(env_params)}"
                 )

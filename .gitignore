@@ -168,3 +168,5 @@ jaxppo/wandb/*
 csv_data
 tmp
 models
+
+*.mp4

@@ -10,11 +10,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import wandb
-from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
+from brax import envs
 
 from jaxppo.ppo import PPO
 from jaxppo.train import Transition, _calculate_gae, make_train
 from jaxppo.wandb_logging import LoggingConfig
+from jaxppo.wrappers import FlattenObservationWrapper  # pylint: disable=C0411
+from tests.classical.mock_brax import mock_reset, mock_step
 
 
 def test_compute_gae():
@@ -65,7 +67,7 @@ TOTAL_TIMESTEPS = int(NUM_ENVS * NUM_STEPS * 2)
 ARCHITECTURE = ["4", "tanh"]
 
 
-def test_trained_ppo_pre_defined_env_no_run():
+def test_trained_ppo_pre_defined_gymnax_env_no_run():
     """Test that ppo init and train work on pre-defined gymnax env"""
     num_envs = NUM_ENVS
     total_timesteps = TOTAL_TIMESTEPS
@@ -91,6 +93,34 @@ def test_trained_ppo_pre_defined_env_no_run():
         env_id,
         learning_rate,
         env_params=env_params,
+    )
+
+
+def test_trained_ppo__brax_env_no_run():
+    """Test that ppo init and train work on pre-defined brax env"""
+    num_envs = NUM_ENVS
+    total_timesteps = TOTAL_TIMESTEPS
+    num_steps = NUM_STEPS
+    learning_rate = 2.5e-4
+    env_id = "pusher"
+    PPO(
+        total_timesteps=total_timesteps,
+        num_steps=num_steps,
+        num_envs=num_envs,
+        env_id=env_id,
+        learning_rate=learning_rate,
+        actor_architecture=ARCHITECTURE,
+        critic_architecture=ARCHITECTURE,
+        env_params=None,
+    )
+
+    make_train(
+        total_timesteps,
+        num_steps,
+        num_envs,
+        env_id,
+        learning_rate,
+        env_params=None,
     )
 
 
@@ -160,6 +190,29 @@ def test_ppo_train_and_test():
         critic_architecture=ARCHITECTURE,
     )
     agent.train(seed=42, test=True)
+
+
+def test_ppo_train_and_test_brax(mocker):
+    """Test that the ppo train function doesn't fail"""
+    num_envs = NUM_ENVS
+    num_steps = NUM_STEPS
+    total_timesteps = TOTAL_TIMESTEPS
+    learning_rate = 2.5e-4
+
+    env = envs.create("inverted_pendulum")
+    mocker.patch.object(env, "step", side_effect=jax.jit(mock_step))
+    mocker.patch.object(env, "reset", side_effect=jax.jit(mock_reset))
+    agent = PPO(
+        total_timesteps=total_timesteps,
+        num_steps=num_steps,
+        num_envs=num_envs,
+        env_id=env,
+        learning_rate=learning_rate,
+        actor_architecture=ARCHITECTURE,
+        critic_architecture=ARCHITECTURE,
+        episode_length=100,
+    )
+    agent.train(seed=42, test=False)
 
 
 def test_ppo_train_and_test_continuous():
@@ -341,3 +394,24 @@ def test_load_agent():
     compare_params(critic.params, new_agent._critic_state.params)
     # assert actor.params == new_agent._actor_state.params
     # assert critic == new_agent._critic_state
+
+
+def test_ppo_train_average_reward():
+    """Test that the ppo train function doesn't fail"""
+    num_envs = NUM_ENVS
+    num_steps = NUM_STEPS
+    total_timesteps = TOTAL_TIMESTEPS
+    learning_rate = 2.5e-4
+    env_id, env_params = gymnax.make("CartPole-v1")
+    agent = PPO(
+        total_timesteps=total_timesteps,
+        num_steps=num_steps,
+        num_envs=num_envs,
+        env_id=env_id,
+        learning_rate=learning_rate,
+        actor_architecture=ARCHITECTURE,
+        critic_architecture=ARCHITECTURE,
+        average_reward=True,
+        env_params=env_params,
+    )
+    agent.train(seed=42, test=True)

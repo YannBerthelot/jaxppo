@@ -13,7 +13,6 @@ tqdm = "^4.65.0"
 gymnax = "^0.0.6"
 appdirs = "1.4.3"
 pydantic = "^2.0.2"
-probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git", rev = "gymnax"}
 wandb = "^0.15.8"
 pandas = "^2.1.1"
 matplotlib = "^3.8.0"
@@ -22,6 +21,7 @@ jax = "0.4.20"
 distrax = "^0.1.5"
 flax = "^0.7.5"
 scipy = "<1.13"
+probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git"}
 
 
 [tool.poetry.group.dev.dependencies]
@@ -30,15 +30,23 @@ flake8 = "^6.0.0"
 mypy = "^1.4.1"
 pre-commit = "^3.3.3"
 pytest = "7.4.0"
-probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git", rev = "gymnax"}
 tox = "^4.6.4"
 coverage = {extras = ["toml"], version = "^7.4.4"}
 pygame = "^2.5.2"
 isort = "^5.13.2"
+pytest-mock = "^3.14.0"
+mock = "^5.1.0"
 
 
 [tool.poetry.group.render.dependencies]
 moviepy = "^1.0.3"
+imageio = {extras = ["ffmpeg"], version = "^2.37.0"}
+
+
+[tool.poetry.group.mujoco.dependencies]
+brax = "^0.10.3"
+mujoco = "^3.1.4"
+mujoco-mjx = "^3.1.4"
 
 [[tool.poetry.source]]
 name = "pypi"
@@ -78,7 +86,7 @@ markers = [
 branch = true
 
 [tool.coverage.report]
-omit = [ "tests/*" , "jaxppo/wrappers.py"]
+omit = [ "tests/*" , "jaxppo/wrappers.py", "jaxppo/wandb_extraction.py" , "jaxppo/wandb_logging.py"]
 ignore_errors = true    
 
 exclude_also = [

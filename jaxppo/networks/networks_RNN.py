@@ -83,8 +83,8 @@ def init_hidden_state(
     rng: jax.random.PRNGKey,
 ) -> HiddenState:
     """Initialize the hidden state for the recurrent layer of the network."""
-    rng, _rng = jax.random.split(rng)
-    return ScannedRNN(lstm_hidden_size).initialize_carry(_rng, num_envs)
+    # rng, _rng = jax.random.split(rng)
+    return ScannedRNN(lstm_hidden_size).initialize_carry(rng, num_envs)
 
 
 def init_networks(
