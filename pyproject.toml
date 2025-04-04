@@ -86,7 +86,7 @@ markers = [
 branch = true
 
 [tool.coverage.report]
-omit = [ "tests/*" , "jaxppo/wrappers.py"]
+omit = [ "tests/*" , "jaxppo/wrappers.py", "jaxppo/wandb_extraction.py" , "jaxppo/wandb_logging.py"]
 ignore_errors = true    
 
 exclude_also = [
