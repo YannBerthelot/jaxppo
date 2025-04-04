@@ -1,15 +1,26 @@
 """Tests for wandb extractions of multiple runs from a single merged-run"""
 
+import netrc
 import os
 import shutil
 from typing import Any
 
 import jax
+import pytest
 import wandb
 
 from jaxppo.wandb_extraction import split_run
 
 WandbRun = Any
+
+
+def is_wandb_logged_in():
+    netrc_path = os.path.expanduser("~/.netrc")
+    if not os.path.exists(netrc_path):
+        return False
+
+    auth = netrc.netrc(netrc_path).authenticators("api.wandb.ai")
+    return bool(auth)
 
 
 def log_smth(run: WandbRun, val: Any) -> None:
@@ -76,6 +87,7 @@ def destroy_fake_run(run_id, folder: str = "wandb_fake") -> None:
     shutil.rmtree(folder)
 
 
+@pytest.mark.skipif(not is_wandb_logged_in(), reason="No wandb user logged in")
 def test_split_run():
     """Checks that the merged-run is split into the expected individual runs."""
     fake_folder = "wandb_fake"

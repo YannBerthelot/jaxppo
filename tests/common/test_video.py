@@ -1,3 +1,7 @@
+import os
+import platform
+import subprocess
+
 import brax.envs as brax_envs
 import gymnax
 import jax
@@ -75,6 +79,31 @@ def test_save_video_gymnax():
     destroy_fake_run(run_id)
 
 
+def has_display():
+    system_platform = platform.system()
+
+    if system_platform == "Linux":
+        # On Linux, check if the DISPLAY environment variable is set
+        return bool(os.environ.get("DISPLAY"))
+
+    elif system_platform == "Darwin":
+        # On macOS, check if the system is running in a graphical environment
+        try:
+            # Run an AppleScript to check if a display exists
+            subprocess.run(
+                ["osascript", "-e", 'tell application "System Events" to return true'],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    return False  # Return False for any other platform
+
+
+@pytest.mark.skipif(not has_display(), reason="No display available")
 @pytest.mark.slow
 def test_save_video_brax():
     seed = 42
