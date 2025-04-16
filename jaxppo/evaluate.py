@@ -2,8 +2,9 @@ from typing import Optional
 
 import jax
 import jax.numpy as jnp
-from gymnax.environments.environment import EnvParams, EnvState
+from gymnax.environments.environment import EnvParams
 
+from jaxppo.environment.environment_interaction import reset_env, step_env
 from jaxppo.networks.networks import get_pi
 from jaxppo.networks.networks_RNN import init_hidden_state
 from jaxppo.types_rnn import HiddenState
@@ -25,7 +26,9 @@ def evaluate(
     mode = "gymnax" if check_env_is_gymnax(env) else "brax"
     key, init_hidden_key, reset_key = jax.random.split(key, 3)
     init_hidden_keys = jax.random.split(init_hidden_key, num_episodes)
-    reset_keys = jax.random.split(reset_key, num_episodes)
+    reset_keys = (
+        jax.random.split(reset_key, num_episodes) if mode == "gymnax" else reset_key
+    )
 
     def get_action_and_entropy(
         obs: jax.Array,
@@ -41,8 +44,8 @@ def evaluate(
                 " first"
             )
         pi, new_hidden = get_pi(
-            actor_state,
-            actor_state.params,
+            actor_state.state,
+            actor_state.state.params,
             obs[jnp.newaxis, :] if recurrent else obs,
             hidden if recurrent else None,  # shape : (1,num_envs,obs_size)
             (  # shape : (num_envs, 2)
@@ -53,37 +56,7 @@ def evaluate(
         action = pi.sample(seed=key)
         return action, new_hidden, pi.entropy()
 
-    def step_env(rng, state, action, env_params):
-        action = jnp.float_(
-            action
-        )  # to unify with brax TODO : find a way to merge this with the train version
-        if mode == "gymnax":
-            obsv, env_state, reward, done, info = jax.vmap(
-                env.step, in_axes=(0, 0, 0, None)
-            )(rng, state, action, env_params)
-        else:
-            env_state = jax.vmap(env.step, in_axes=(0, 0))(state, action)
-            obsv, reward, done, info = (
-                env_state.obs,
-                env_state.reward,
-                env_state.done,
-                env_state.info,
-            )
-
-        return obsv, env_state, reward, done, info
-
-    def reset_env(
-        rng: jax.Array,
-        env_params: Optional[EnvParams] = None,
-    ) -> tuple[jax.Array, EnvState]:
-        if mode == "gymnax":
-            obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(rng, env_params)
-        else:  # brax
-            env_state = jax.vmap(jax.jit(env.reset), in_axes=(0))(rng)
-            obsv = env_state.obs
-        return obsv, env_state
-
-    obs, state = reset_env(reset_keys, env_params)
+    obs, state = reset_env(reset_keys, env, mode, env_params)
     done = jnp.zeros(num_episodes, dtype=jnp.int8)
     rewards = jnp.zeros(num_episodes)
     entropy_collected = jnp.zeros(1)
@@ -101,7 +74,9 @@ def evaluate(
     def sample_action_and_step_env(carry):
         (rewards, rng, obs, done, hidden, state, entropy_collected) = carry
         rng, action_key, step_key = jax.random.split(rng, num=3)
-        step_keys = jax.random.split(step_key, num_episodes)
+        step_keys = (
+            jax.random.split(step_key, num_episodes) if mode == "gymnax" else step_key
+        )
         actions, hidden, entropy = get_action_and_entropy(
             obs,
             action_key,
@@ -112,6 +87,8 @@ def evaluate(
             step_keys,
             state,
             actions.squeeze(0) if recurrent else actions,
+            env,
+            mode,
             env_params,
         )
         entropy_collected += (

@@ -1,7 +1,8 @@
 """Pure jax PPO training"""
 
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple, Optional, Sequence
 
+import flashbax as fbx
 import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
@@ -33,6 +34,12 @@ from jaxppo.video import save_video_to_wandb
 from jaxppo.wandb_logging import log_variables
 
 
+def get_buffer(buffer_size: int, batch_size: int, min_length: int = 1):
+    return fbx.make_flat_buffer(
+        max_length=buffer_size, sample_batch_size=batch_size, min_length=min_length
+    )
+
+
 class Transition(NamedTuple):
     """Store transitions inside a buffer"""
 
@@ -52,10 +59,9 @@ class RunnerState(NamedTuple):
     env_state: EnvState
     last_obs: jnp.ndarray
     rng: jax.Array
-    critic_state: TrainState
+    buffer_state: fbx.flat_buffer.TrajectoryBufferState
     last_done: Optional[jnp.ndarray] = None
     actor_hidden_state: Optional[jnp.ndarray] = None
-    critic_hidden_state: Optional[jnp.ndarray] = None
     num_update: int = 0
     timestep: int = 0
     average_reward: float = 0.0
@@ -67,12 +73,12 @@ class UpdateState(NamedTuple):
 
     actor_state: TrainState
     traj_batch: Transition
-    advantages: jnp.ndarray
-    targets: jnp.ndarray
     rng: jax.Array
-    critic_state: TrainState
+    critic_state: Sequence[TrainState]
+    target_critic_state: Sequence[TrainState]
     actor_hidden_state: Optional[HiddenState] = None
-    critic_hidden_state: Optional[HiddenState] = None
+    critic_hidden_state: Optional[Sequence[HiddenState]] = None
+    target_critic_hidden_state: Optional[Sequence[HiddenState]] = None
 
 
 @partial(jax.jit, static_argnames=["average_reward_mode"])
@@ -150,6 +156,12 @@ def _calculate_gae(
     return advantages, returns
 
 
+def get_target_state(state: TrainState | Sequence[TrainState]):
+    if isinstance(state, Sequence):
+        return [x for x in state]
+    return state
+
+
 def init_agent(  # pylint: disable=W0102, R0913
     key: jax.Array,
     env: Environment,
@@ -163,6 +175,8 @@ def init_agent(  # pylint: disable=W0102, R0913
     num_updates: int,
     max_grad_norm: Optional[float],
     env_params: EnvParams,
+    buffer_size: int,
+    minibatch_size: int,
     lstm_hidden_size: Optional[int] = None,
     continuous: bool = False,
 ):
@@ -196,7 +210,7 @@ def init_agent(  # pylint: disable=W0102, R0913
     (actor_state, critic_state), (actor_hidden_state, critic_hidden_state) = (
         init_actor_and_critic_state(
             actor_network=actor_network,
-            critic_network=critic_network,
+            critic_network=[critic_network for _ in range(2)],
             actor_key=actor_key,
             critic_key=critic_key,
             env=env,
@@ -207,12 +221,19 @@ def init_agent(  # pylint: disable=W0102, R0913
             num_envs=num_envs,
         )
     )
+    target_critic_state = get_target_state(critic_state)
+    target_critic_hidden_state = get_target_state(critic_hidden_state)
+
+    buffer = get_buffer(buffer_size, minibatch_size)
     return (
         actor_state,
         critic_state,
         actor_hidden_state,
         critic_hidden_state,
+        target_critic_state,
+        target_critic_hidden_state,
         rng,
+        buffer,
     )
 
 
@@ -248,6 +269,7 @@ def make_train(  # pylint: disable=W0102, R0913
     window_size: int = 32,
     episode_length: int = Optional[None],
     render_env_id: Optional[str] = None,
+    buffer_size: int = int(1e6),
 ) -> Callable[..., RunnerState]:
     """
     Generate the train function (to be jitted) according to the given parameters.
@@ -307,7 +329,10 @@ def make_train(  # pylint: disable=W0102, R0913
             critic_state,
             actor_hidden_state,
             critic_hidden_state,
+            target_critic_state,
+            target_critic_hidden_state,
             rng,
+            buffer,
         ) = init_agent(
             key,
             env,
@@ -323,6 +348,8 @@ def make_train(  # pylint: disable=W0102, R0913
             env_params,
             lstm_hidden_size=lstm_hidden_size,
             continuous=continuous,
+            minibatch_size=minibatch_size,
+            buffer_size=buffer_size,
         )
         # INIT ENV
         rng, reset_key = jax.random.split(rng)
@@ -363,16 +390,24 @@ def make_train(  # pylint: disable=W0102, R0913
         # TRAIN LOOP
         last_done = jnp.zeros(num_envs, dtype=float)
         timestep = 0
+        buffer_state = buffer.init(
+            {
+                "obs": obsv,
+                "action": jnp.zeros((num_envs, env.action_size)),
+                "reward": jnp.zeros((num_envs,)),
+                "done": jnp.zeros((num_envs,)),
+                "next_obs": obsv,
+            }
+        )
         runner_state = RunnerState(
             actor_state=actor_state,
-            critic_state=critic_state,
             env_state=env_state,
             last_obs=obsv,
             rng=rng,
             timestep=timestep,
             actor_hidden_state=actor_hidden_state,
-            critic_hidden_state=critic_hidden_state,
             last_done=last_done,
+            buffer_state=buffer_state,
         )
         recurrent = actor_hidden_state is not None and critic_hidden_state is not None
 
@@ -454,28 +489,34 @@ def make_train(  # pylint: disable=W0102, R0913
                     runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
                     recurrent,
                 )
-                value, new_critic_hidden_state = predict_value(
-                    runner_state.critic_state,
-                    runner_state.critic_state.params,
-                    (
-                        runner_state.last_obs[jnp.newaxis, :]
-                        if recurrent
-                        else runner_state.last_obs
-                    ),
-                    runner_state.critic_hidden_state if recurrent else None,
-                    runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
-                    recurrent,
-                )
-                rng, action_key = jax.random.split(runner_state.rng)
-                # pi = runner_state.actor_state.apply_fn(
-                #     runner_state.actor_state.params, runner_state.last_obs
+
+                # value_1, new_critic_hidden_state_1 = predict_value(
+                #     runner_state.critic_state[0],
+                #     runner_state.critic_state[0].params,
+                #     (
+                #         runner_state.last_obs[jnp.newaxis, :]
+                #         if recurrent
+                #         else runner_state.last_obs
+                #     ),
+                #     runner_state.critic_hidden_state if recurrent else None,
+                #     runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
+                #     recurrent,
+                # )  # TODO : Can do better than splitting into value and value 2?
+                # value_2, new_critic_hidden_state_2 = predict_value(
+                #     runner_state.critic_state[1],
+                #     runner_state.critic_state[1].params,
+                #     (
+                #         runner_state.last_obs[jnp.newaxis, :]
+                #         if recurrent
+                #         else runner_state.last_obs
+                #     ),
+                #     runner_state.critic_hidden_state if recurrent else None,
+                #     runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
+                #     recurrent,
                 # )
-                # if not recurrent:
-                #     # action = pi.sample(seed=action_key).reshape(
-                #     #     -1,
-                #     # )
-                #     action = pi.sample(seed=action_key)  # cast to float for consistency
-                # else:
+
+                rng, action_key = jax.random.split(runner_state.rng)
+
                 action = pi.sample(
                     seed=action_key
                 )  # cast to float to unify gymnax with brax
@@ -484,8 +525,8 @@ def make_train(  # pylint: disable=W0102, R0913
                 log_prob = pi.log_prob(action)
 
                 if recurrent:
-                    value, action, log_prob = (
-                        value.squeeze(0),
+                    action, log_prob = (
+                        # value.squeeze(0),
                         action.squeeze(0),
                         log_prob.squeeze(0),
                     )
@@ -497,29 +538,39 @@ def make_train(  # pylint: disable=W0102, R0913
                 obsv, env_state, reward, done, info = step_env(
                     env, runner_state.env_state, action, rng_step, env_params
                 )
-                transition = Transition(
-                    runner_state.last_done,
-                    action,
-                    value,
-                    reward,
-                    log_prob,
-                    runner_state.last_obs,
-                    info,
+                # transition = Transition(
+                #     runner_state.last_done,
+                #     action,
+                #     value,
+                #     reward,
+                #     log_prob,
+                #     runner_state.last_obs,
+                #     info,
+                # )
+
+                buffer_state = buffer.add(
+                    runner_state.buffer_state,
+                    {
+                        "obs": runner_state.last_obs,
+                        "action": action,
+                        "reward": reward,
+                        "done": runner_state.last_done,
+                        "next_obs": obsv,
+                    },
                 )
                 runner_state = RunnerState(
                     actor_state=runner_state.actor_state,
-                    critic_state=runner_state.critic_state,
                     env_state=env_state,
                     last_obs=obsv,
                     rng=rng,
                     actor_hidden_state=new_actor_hidden_state,
-                    critic_hidden_state=new_critic_hidden_state,
                     last_done=done,
+                    buffer_state=buffer_state,
                 )
-                return runner_state, transition
+                return runner_state, None
 
-            initial_actor_hidden_state = runner_state.actor_hidden_state
-            initial_critic_hidden_state = runner_state.critic_hidden_state
+            initial_actor_hidden_state = runner_state.actor_hidden_state  # TODO : check
+            initial_critic_hidden_state = critic_hidden_state
             if recurrent:
                 if (
                     initial_actor_hidden_state is None
@@ -534,39 +585,9 @@ def make_train(  # pylint: disable=W0102, R0913
             timestep = runner_state.timestep
             num_update = runner_state.num_update
             # COLLECT BATCH TRAJECTORIES
-            runner_state, traj_batch = jax.lax.scan(
-                f=_env_step_pre_partial, init=runner_state, xs=None, length=num_steps
-            )
-            avg = None
 
-            if average_reward_mode:
-                avg = jnp.average(
-                    traj_batch.reward[: -min(window_size, num_steps - 1)],
-                    axis=0,
-                )
-            # CALCULATE ADVANTAGE
-            last_val, _ = predict_value(
-                runner_state.critic_state,
-                runner_state.critic_state.params,
-                (
-                    runner_state.last_obs[jnp.newaxis, :]
-                    if recurrent
-                    else runner_state.last_obs
-                ),
-                runner_state.critic_hidden_state if recurrent else None,
-                runner_state.last_done[jnp.newaxis, :] if recurrent else None,  # type: ignore[index]
-                recurrent,
-            )
-            if recurrent:
-                last_val = last_val.squeeze(0)
-            advantages, targets = _calculate_gae(
-                traj_batch,
-                last_val,
-                last_done=runner_state.last_done,
-                gamma=gamma,
-                gae_lambda=gae_lambda,
-                average_reward_mode=average_reward_mode,
-                average_reward=avg,
+            runner_state, _ = jax.lax.scan(
+                f=_env_step_pre_partial, init=runner_state, xs=None, length=num_steps
             )
 
             # UPDATE NETWORK
@@ -608,7 +629,7 @@ def make_train(  # pylint: disable=W0102, R0913
                 permutation = jax.random.permutation(
                     permutation_key, num_envs if recurrent else batch_size
                 )
-                # Not possible to permutate differently that the env order, otherwise it messes up hidden states
+                # Not possible to permutate differently than the env order, otherwise it messes up hidden states
                 if recurrent:
                     batch = (
                         update_state.traj_batch,
@@ -881,9 +902,8 @@ def make_train(  # pylint: disable=W0102, R0913
             update_state = UpdateState(
                 actor_state=runner_state.actor_state,
                 critic_state=runner_state.critic_state,
+                target_critic_state=runner_state.target_critic_state,
                 traj_batch=traj_batch,
-                advantages=advantages,
-                targets=targets,
                 rng=runner_state.rng,
                 actor_hidden_state=initial_actor_hidden_state,
                 critic_hidden_state=initial_critic_hidden_state,
@@ -926,6 +946,7 @@ def make_train(  # pylint: disable=W0102, R0913
             runner_state = RunnerState(
                 actor_state=update_state.actor_state,
                 critic_state=update_state.critic_state,
+                target_critic_state=update_state.target_critic_state,
                 env_state=runner_state.env_state,
                 last_obs=runner_state.last_obs,
                 rng=update_state.rng,
@@ -933,7 +954,9 @@ def make_train(  # pylint: disable=W0102, R0913
                 num_update=num_update + 1,
                 actor_hidden_state=runner_state.actor_hidden_state,
                 critic_hidden_state=runner_state.critic_hidden_state,
+                target_critic_hidden_state=runner_state.target_critic_hidden_state,
                 last_done=runner_state.last_done,
+                buffer_state=runner_state.buffer_state,
             )
             if log_video:
                 # Save model and video if needed

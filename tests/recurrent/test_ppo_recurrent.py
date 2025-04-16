@@ -9,8 +9,8 @@ import pytest
 import wandb
 from gymnax.wrappers.purerl import FlattenObservationWrapper  # pylint: disable=C0411
 
-from jaxppo.ppo import PPO
-from jaxppo.train import make_train
+from jaxppo.ppo.ppo import PPO
+from jaxppo.ppo.train_ppo import make_train
 from jaxppo.wandb_logging import LoggingConfig
 
 NUM_ENVS = 2

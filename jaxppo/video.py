@@ -192,8 +192,8 @@ def save_video_to_wandb(
 
             rng, action_key = jax.random.split(rng)
             pi, actor_hidden_state = get_pi(
-                update_state.actor_state,
-                update_state.actor_state.params,
+                update_state.actor_state.state,
+                update_state.actor_state.state.params,
                 obs_render[jnp.newaxis, :] if recurrent else obs_render,
                 actor_hidden_state if recurrent else None,
                 done_jax.reshape(-1, 1) if recurrent else None,
@@ -260,8 +260,8 @@ def save_video_to_wandb(
             rng, action_key = jax.random.split(rng)
 
             pi, actor_hidden_state = get_pi(
-                update_state.actor_state,
-                update_state.actor_state.params,
+                update_state.actor_state.state,
+                update_state.actor_state.state.params,
                 obs_render[jnp.newaxis, :][jnp.newaxis, :] if recurrent else obs_render,
                 actor_hidden_state if recurrent else None,
                 done_jax.reshape(-1, 1) if recurrent else None,

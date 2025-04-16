@@ -23,7 +23,7 @@ from probing_environments.checks import (
 from probing_environments.utils.type_hints import AgentType
 
 from jaxppo.networks.networks_RNN import init_hidden_state as _init_hidden_state
-from jaxppo.ppo import PPO
+from jaxppo.ppo.ppo import PPO
 
 
 @struct.dataclass

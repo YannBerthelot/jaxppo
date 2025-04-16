@@ -16,7 +16,7 @@ from gymnax.environments.environment import Environment
 from probing_environments.checks import check_average_reward
 from probing_environments.utils.type_hints import AgentType
 
-from jaxppo.ppo import PPO
+from jaxppo.ppo.ppo import PPO
 
 
 @struct.dataclass

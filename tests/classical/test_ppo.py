@@ -11,9 +11,10 @@ import numpy as np
 import pytest
 import wandb
 from brax import envs
+from flax.core import FrozenDict
 
-from jaxppo.ppo import PPO
-from jaxppo.train import Transition, _calculate_gae, make_train
+from jaxppo.ppo.ppo import PPO
+from jaxppo.ppo.train_ppo import Transition, _calculate_gae, make_train
 from jaxppo.wandb_logging import LoggingConfig
 from jaxppo.wrappers import FlattenObservationWrapper  # pylint: disable=C0411
 from tests.classical.mock_brax import mock_reset, mock_step
@@ -192,21 +193,19 @@ def test_ppo_train_and_test():
     agent.train(seed=42, test=True)
 
 
-def test_ppo_train_and_test_brax(mocker):
+def test_ppo_train_and_test_brax():
     """Test that the ppo train function doesn't fail"""
     num_envs = NUM_ENVS
     num_steps = NUM_STEPS
     total_timesteps = TOTAL_TIMESTEPS
     learning_rate = 2.5e-4
 
-    env = envs.create("inverted_pendulum")
-    mocker.patch.object(env, "step", side_effect=jax.jit(mock_step))
-    mocker.patch.object(env, "reset", side_effect=jax.jit(mock_reset))
+    env_id = "ant"
     agent = PPO(
         total_timesteps=total_timesteps,
         num_steps=num_steps,
         num_envs=num_envs,
-        env_id=env,
+        env_id=env_id,
         learning_rate=learning_rate,
         actor_architecture=ARCHITECTURE,
         critic_architecture=ARCHITECTURE,
@@ -385,13 +384,13 @@ def test_load_agent():
 
     def compare_params(params_1, params_2):
         for key in params_1.keys():
-            if isinstance(params_1[key], dict):
+            if isinstance(params_1[key], (dict, FrozenDict)):
                 compare_params(params_1[key], params_2[key])
             else:
                 assert jnp.array_equal(params_1[key], params_2[key])
 
-    compare_params(actor.params, new_agent._actor_state.params)
-    compare_params(critic.params, new_agent._critic_state.params)
+    compare_params(actor.state.params, new_agent._actor_state.state.params)
+    compare_params(critic.state.params, new_agent._critic_state.state.params)
     # assert actor.params == new_agent._actor_state.params
     # assert critic == new_agent._critic_state
 

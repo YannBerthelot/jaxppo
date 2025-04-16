@@ -1,0 +1,89 @@
+"""Config for PPO agent"""
+
+import json
+from typing import Any, NoReturn, Optional, Sequence
+
+# from gymnax.environments.environment import Environment
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
+
+from jaxppo.utils import Environment, GymnaxEnvironment, check_env_is_gymnax
+from jaxppo.wandb_logging import LoggingConfig
+from jaxppo.wrappers import GymnaxWrapper
+
+
+class SACConfig(BaseModel):
+    """Config for PPO agent"""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    total_timesteps: int
+    num_steps: int
+    num_envs: int
+    env_params: Optional[Any] = None
+    env_id: Any
+    learning_rate: float
+    buffer_size: int = int(1e6)
+    batch_size: int = 256
+    learning_starts: int = 100
+    tau: float = 0.05
+    actor_architecture: Sequence[str] = ["64", "tanh", "64", "tanh"]
+    critic_architecture: Sequence[str] = ["64", "relu", "relu", "tanh"]
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    ent_coef: float = 0.01
+    logging_config: Optional[LoggingConfig] = None
+    num_episode_test: int = 2
+    anneal_lr: bool = True
+    max_grad_norm: Optional[float] = 0.5
+    advantage_normalization: bool = True
+    save: bool = False
+    save_folder: str = "./models"
+    log_video: bool = False
+    log_video_frequency: Optional[int] = None
+    save_frequency: Optional[int] = None
+    lstm_hidden_size: Optional[int] = None
+    continuous: bool = False
+    average_reward: bool = False
+    window_size: int = 32
+    episode_length: Optional[int] = None
+    render_env_id: Optional[str] = None
+
+    @field_validator("env_id")
+    @classmethod
+    def check_env_id_and_params(
+        cls, env_id: str | Environment | GymnaxWrapper, info: Any
+    ) -> (str | Environment | GymnaxWrapper) | NoReturn:
+        """Check that value environment is a valid gymnax env id, gymnax env, or gymnax wrapped env"""
+        env_params = info.data["env_params"]
+        if isinstance(env_id, str):
+            return env_id
+        elif check_env_is_gymnax(env_id) or isinstance(env_id, Environment):
+            if env_params is None and issubclass(
+                env_id.__class__, (GymnaxEnvironment, GymnaxWrapper)
+            ):
+                raise ValueError("Missing EnvParams for pre-defined env")
+            if "EnvParams" not in str(env_params.__class__) and issubclass(
+                env_id.__class__, (GymnaxEnvironment, GymnaxWrapper)
+            ):
+                raise ValueError(
+                    f"env_params should be of a EnvParams type, got {type(env_params)}"
+                )
+            return env_id
+        else:
+            raise ValueError(
+                "Environment should be either a valid env id or a gymnax"
+                " environment or a gymnax wrapped_env"
+            )
+
+    @field_serializer("env_params", "env_id")
+    def serialize_env_or_env_params(
+        self, value: str | Environment | GymnaxWrapper
+    ) -> Optional[str]:
+        """Serialize normally un-hashable types by using str representation"""
+        if isinstance(value, str) or value is None:
+            return value
+        return str(value.__class__)
+
+    def to_dict(self) -> dict:
+        """Converts the Pydantic config to a dict"""
+        return json.loads(self.model_dump_json())

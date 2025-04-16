@@ -14,7 +14,7 @@ from test_wandb_extraction import (
     setup_wandb_user,
 )
 
-from jaxppo.train import UpdateState, init_agent
+from jaxppo.ppo.train_ppo import UpdateState, init_agent
 from jaxppo.video import save_video_to_wandb
 
 setup_wandb_user("yann-berthelot")

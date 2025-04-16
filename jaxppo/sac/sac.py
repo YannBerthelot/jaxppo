@@ -1,4 +1,4 @@
-"""PPO class to easily handle the agent"""
+"""SAC class to easily handle the agent"""
 
 from typing import Optional
 
@@ -11,19 +11,19 @@ from gymnax.environments.environment import (  # TODO : mix brax here
 from gymnax.wrappers.purerl import GymnaxWrapper
 from jax import random
 
-from jaxppo.config import PPOConfig
 from jaxppo.evaluate import evaluate
 from jaxppo.networks.networks import get_pi
 from jaxppo.networks.networks import predict_probs as network_predict_probs
 from jaxppo.networks.networks import predict_value as network_predict_value
-from jaxppo.train import init_agent, make_train
+from jaxppo.sac.sac_config import SACConfig
+from jaxppo.sac.train_sac import init_agent, make_train
 from jaxppo.types_rnn import HiddenState
 from jaxppo.utils import build_env_from_id, load_model, prepare_env
 from jaxppo.wandb_logging import LoggingConfig, init_logging, wandb_test_log
 
 
-class PPO:
-    """PPO Agent that allows simple training and testing"""
+class SAC:
+    """SAC Agent that allows simple training and testing"""
 
     def __init__(  # pylint: disable=W0102, R0913
         self,
@@ -33,19 +33,14 @@ class PPO:
         env_id: str | Environment | GymnaxWrapper,
         learning_rate: float,
         num_minibatches: int = 4,
-        update_epochs: int = 4,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
         gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-        clip_coef: float = 0.2,
-        clip_coef_vf: Optional[float] = None,
         ent_coef: float = 0.01,
         logging_config: Optional[LoggingConfig] = None,
         env_params: Optional[EnvParams] = None,
         anneal_lr: bool = True,
         max_grad_norm: float = 0.5,
-        advantage_normalization: bool = True,
         save: bool = False,
         save_folder: str = "./models",
         log_video: bool = False,
@@ -57,9 +52,10 @@ class PPO:
         window_size: int = 32,
         episode_length: Optional[int] = None,
         render_env_id: Optional[str] = None,
+        buffer_size: int = int(1e6),
     ) -> None:
         """
-        PPO Agent that allows simple training and testing
+        SAC Agent that allows simple training and testing
 
         Args:
         total_timesteps (int): Total number of timesteps (distributed across all envs)\
@@ -71,16 +67,11 @@ class PPO:
         learning_rate (float): The learning rate for the optimizer of networks.
         num_minibatches (int, optional): The number of minibatches (number of shuffled\
               minibatch in an epoch). Defaults to 4.
-        update_epochs (int, optional): The number of epochs to run on the same\
-              collected data. Defaults to 4.
         actor_architecture (list, optional): The description of the architecture of the\
               actor network. Defaults to ["64", "tanh", "64", "tanh"].
         critic_architecture (list, optional): The description of the architecture of\
               the critic network. Defaults to ["64", "relu", "relu", "tanh"].
         gamma (float, optional): The discount factor. Defaults to 0.99.
-        gae_lambda (float, optional): The gae advantage computation lambda parameter.\
-             Defaults to 0.95.
-        clip_coef (float, optional): PPO's clipping coefficient. Defaults to 0.2.
         ent_coef (float, optional): The entropy coefficient in the actor loss.\
               Defaults to 0.01.
         log (bool, optional): Wether or not to log training using wandb.
@@ -88,31 +79,26 @@ class PPO:
 
         key = random.PRNGKey(seed)
         num_updates = total_timesteps // num_steps // num_envs
-
+        minibatch_size = num_envs * num_steps // num_minibatches
         env, env_params, env_id, continuous = prepare_env(
             env_id, env_params=env_params
         )  # TODO : make it simpler as it is only used for initializing the networks
 
-        self.config = PPOConfig(
+        self.config = SACConfig(
             total_timesteps=total_timesteps,
             num_steps=num_steps,
             num_envs=num_envs,
             env_id=env_id,
             learning_rate=learning_rate,
             num_minibatches=num_minibatches,
-            update_epochs=update_epochs,
             actor_architecture=actor_architecture,
             critic_architecture=critic_architecture,
             gamma=gamma,
-            gae_lambda=gae_lambda,
-            clip_coef=clip_coef,
-            clip_coef_vf=clip_coef_vf,
             ent_coef=ent_coef,
             logging_config=logging_config,
             env_params=env_params,
             anneal_lr=anneal_lr,
             max_grad_norm=max_grad_norm,
-            advantage_normalization=advantage_normalization,
             save=save,
             save_folder=save_folder,
             log_video=log_video,
@@ -124,6 +110,7 @@ class PPO:
             window_size=window_size,
             episode_length=episode_length,
             render_env_id=render_env_id,
+            buffer_size=buffer_size,
         )
 
         (
@@ -131,21 +118,26 @@ class PPO:
             self._critic_state,
             self.actor_hidden_state,
             self.critic_hidden_state,
+            self._target_critic_state,
+            self.target_critic_hidden_state,
             self.rng,
+            self.buffer,
         ) = init_agent(
-            key,
-            env,
-            actor_architecture,
-            critic_architecture,
-            num_envs,
-            anneal_lr,
-            learning_rate,
-            num_minibatches,
-            update_epochs,
-            num_updates,
-            max_grad_norm,
-            env_params,
+            key=key,
+            env=env,
+            actor_architecture=actor_architecture,
+            critic_architecture=critic_architecture,
+            num_envs=num_envs,
+            anneal_lr=anneal_lr,
+            learning_rate=learning_rate,
+            num_minibatches=num_minibatches,
+            num_updates=num_updates,
+            max_grad_norm=max_grad_norm,
+            env_params=env_params,
+            buffer_size=buffer_size,
             continuous=continuous,
+            minibatch_size=minibatch_size,
+            update_epochs=1,
         )
         self.recurrent = lstm_hidden_size is not None
 
@@ -182,14 +174,10 @@ class PPO:
             num_envs=self.config.num_envs,
             env_id=self.config.env_id,
             learning_rate=self.config.learning_rate,
-            num_minibatches=self.config.num_minibatches,
-            update_epochs=self.config.update_epochs,
             actor_architecture=self.config.actor_architecture,
             critic_architecture=self.config.critic_architecture,
             gamma=self.config.gamma,
             gae_lambda=self.config.gae_lambda,
-            clip_coef=self.config.clip_coef,
-            clip_coef_vf=self.config.clip_coef_vf,
             ent_coef=self.config.ent_coef,
             log=self.config.logging_config is not None,
             env_params=self.config.env_params,
@@ -365,28 +353,23 @@ if __name__ == "__main__":
     logging_config = LoggingConfig("Continuous PPO", "test", config={})
     init_logging(logging_config=logging_config, folder=None)
     sb3_batch_size = 64
-    agent = PPO(
+    agent = SAC(
         env_id=env_id,
         learning_rate=3e-4,
         num_steps=num_steps,
         num_minibatches=num_steps * num_envs // sb3_batch_size,
-        update_epochs=10,
         gamma=0.99,
-        gae_lambda=0.95,
-        clip_coef=0.2,
         ent_coef=0.0,
         logging_config=logging_config,
         total_timesteps=int(1e6),
         num_envs=num_envs,
         actor_architecture=["64", "tanh", "64", "tanh"],
         critic_architecture=["64", "tanh", "64", "tanh"],
-        clip_coef_vf=None,
         anneal_lr=False,
         max_grad_norm=0.5,
         save=True,
         log_video=True,
         video_log_frequency=None,
-        average_reward=False,
         render_env_id=true_env_id,
         # window_size=2048,
         # lstm_hidden_size=16,

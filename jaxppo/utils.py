@@ -3,19 +3,21 @@
 import os
 import pickle
 from functools import partial
-from typing import Any, Callable, Optional, Tuple, TypeAlias, cast
+from typing import Any, Callable, Optional, Tuple, TypeAlias, Union, cast
 
 import gymnasium as gym
 import gymnax
 import gymnax.wrappers
 import jax
 import jax.numpy as jnp
+from brax.envs.base import Env as BraxEnv
 from flax.serialization import from_state_dict, to_state_dict
 from flax.training.train_state import TrainState
 from gymnasium import Env as GymnasiumEnvironment
 from gymnasium import Wrapper as GymnasiumWrapper
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from gymnax import EnvParams
+from gymnax.environments.environment import Environment as GymnaxEnv
 from gymnax.environments.environment import Environment as GymnaxEnvironment
 from jax import random
 
@@ -81,21 +83,23 @@ def sample_obs_space(
         raise ValueError(f"Unsupported environment type {type(env)}")
 
 
-def check_env_is_brax(env):
-    return isinstance(env, BraxEnvironment) or issubclass(env.__class__, BraxWrapper)
+def check_env_is_brax(env) -> bool:
+    return isinstance(env, BraxEnvironment) or "brax" in str(type(env)).lower()
 
 
-def check_env_is_gymnax(env):
+def check_env_is_gymnax(env) -> bool:
+    if isinstance(env, GymnaxEnvironment):
+        return True
+    if "unwrapped" in dir(env):
+        return isinstance(env.unwrapped, GymnaxEnvironment)
+    if "_env" in dir(env):
+        return isinstance(env._env, GymnaxEnvironment)
+    return False
+
+
+def check_env_is_gymnasium(env) -> bool:
     return (
-        isinstance(env, GymnaxEnvironment)
-        or issubclass(env.__class__, GymnaxWrapper)
-        or issubclass(env.__class__, gymnax.wrappers.purerl.GymnaxWrapper)
-    )
-
-
-def check_env_is_gymnasium(env):
-    return isinstance(env, GymnasiumEnvironment) or issubclass(
-        env.__class__, GymnasiumWrapper
+        isinstance(env, GymnasiumEnvironment) or "gymnasium" in str(type(env)).lower()
     )
 
 
@@ -252,13 +256,15 @@ env_dict = {
 }
 
 
-def build_env_from_id(env_id: str, **kwargs) -> tuple[Environment, Optional[EnvParams]]:
+def build_env_from_id(
+    env_id: str, num_envs: int = 1, **kwargs
+) -> tuple[Environment, Optional[EnvParams]]:
     if env_id in gymnax.registered_envs:
         env, env_params = gymnax.make(env_id)
         return env, env_params
     if brax_envs is not None:
         if env_id in list(env_dict.values()):
-            return brax_envs.create(env_id, **kwargs), None
+            return brax_envs.create(env_id, batch_size=num_envs, **kwargs), None
         else:
             raise ValueError(f"Environment {env_id} not found in gymnax or mjx")
     else:
@@ -285,11 +291,15 @@ def prepare_env(
     env_id,
     episode_length: Optional[int] = None,
     env_params: Optional[EnvParams] = None,
+    num_envs: int = 1,
 ):
     if isinstance(env_id, str):
         env, env_params = build_env_from_id(
-            env_id, episode_length=1000 if episode_length is None else episode_length
+            env_id,
+            episode_length=1000 if episode_length is None else episode_length,
+            num_envs=num_envs,
         )
+
     else:  # env is assumed to be provided already built
         env = env_id
     continuous = check_if_environment_has_continuous_actions(env)
@@ -305,3 +315,43 @@ def prepare_env(
         env = NormalizeVecObservation(env)
         # env = NormalizeVecReward(env, gamma)
     return env, env_params, env_id, continuous
+
+
+def get_state_action_shapes(env, env_params=None) -> Tuple[tuple, tuple]:
+    """
+    Returns the (obs_shape, action_shape) of a gymnax, brax, or gymnasium environment.
+
+    - Discrete action spaces return shape (1,)
+    - Shapes are returned as `tuple`s (not multiplied)
+    - Works for wrapped environments
+    """
+    # Gymnax
+    if check_env_is_gymnax(env):
+        key = jax.random.PRNGKey(0)
+        obs_space = env.observation_space(env_params)
+        act_space = env.action_space(env_params)
+        obs_shape = obs_space.shape
+        # Discrete check via duck typing
+        if hasattr(act_space, "n") and isinstance(act_space.n, int):
+            action_shape = (1,)
+        else:
+            action_shape = act_space.shape
+        return obs_shape, action_shape
+
+    # Brax
+    elif check_env_is_brax(env):
+        obs_shape = (env.observation_size,)
+        action_shape = (env.action_size,)
+        return obs_shape, action_shape
+
+    # Gymnasium
+    elif check_env_is_gymnasium(env):
+        obs_shape = env.observation_space().shape
+        act_space = env.action_space()
+        action_shape = (
+            (1,) if isinstance(act_space, gym.spaces.Discrete) else act_space.shape
+        )
+        return obs_shape, action_shape
+
+    else:
+        raise ValueError(f"Unsupported environment type: {type(env)}")

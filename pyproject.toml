@@ -10,18 +10,19 @@ python = ">=3.10, <3.13"
 gymnasium = "^0.28.1"
 numpy = "^1.25.0"
 tqdm = "^4.65.0"
-gymnax = "^0.0.6"
+gymnax = {git = "https://github.com/YannBerthelot/gymnax.git"}
 appdirs = "1.4.3"
 pydantic = "^2.0.2"
 wandb = "^0.15.8"
 pandas = "^2.1.1"
 matplotlib = "^3.8.0"
-jaxlib = "0.4.20"
-jax = "0.4.20"
+jaxlib = "0.4.25"
+jax = "0.4.25"
 distrax = "^0.1.5"
-flax = "^0.7.5"
+flax = ">=0.8"
 scipy = "<1.13"
 probing-environments = {git = "https://github.com/YannBerthelot/ProbingEnvironments.git"}
+flashbax = "^0.1.3"
 
 
 [tool.poetry.group.dev.dependencies]

@@ -1,5 +1,6 @@
 """Networks initialization"""
 
+from functools import partial
 from typing import Callable, Optional, Sequence, Tuple, TypeAlias, Union, cast, get_args
 
 import distrax
@@ -17,7 +18,12 @@ from jax import Array
 from numpy import ndarray
 from optax import GradientTransformation, GradientTransformationExtraArgs
 
-from jaxppo.utils import get_num_actions, get_observation_space_shape
+from jaxppo.utils import (
+    get_env_action_shape,
+    get_num_actions,
+    get_observation_space_shape,
+    get_state_action_shapes,
+)
 
 ActivationFunction: TypeAlias = Union[
     jax._src.custom_derivatives.custom_jvp, jaxlib.xla_extension.PjitFunction
@@ -77,6 +83,7 @@ class Network(nn.Module):
     num_of_actions: Optional[int] = None
     multiple_envs: bool = True
     continuous: bool = False
+    action_value: bool = False
 
     @property
     def architecture(self) -> nn.Sequential:
@@ -124,10 +131,10 @@ class Network(nn.Module):
             )
 
     @nn.compact
-    def __call__(self, x: Array):
+    def __call__(self, obs: Array, action: Optional[Array] = None):
         if self.actor:
             if self.continuous:
-                actor_mean = self.architecture(x)
+                actor_mean = self.architecture(obs)
                 actor_logtstd = self.param(
                     "log_std",
                     nn.initializers.zeros,
@@ -138,11 +145,18 @@ class Network(nn.Module):
                 #     actor_mean, jnp.exp(actor_logtstd), minimum=-1, maximum=1
                 # )
 
-            return self.architecture(x)
+            return self.architecture(obs)
+        if self.action_value:
+            obs_action = jnp.concatenate([obs, action], axis=-1)
+            return (
+                self.architecture(obs_action).squeeze()
+                if self.multiple_envs
+                else self.architecture(obs_action)
+            )
         return (
-            self.architecture(x).squeeze()
+            self.architecture(obs).squeeze()
             if self.multiple_envs
-            else self.architecture(x)
+            else self.architecture(obs)
         )
 
 
@@ -153,6 +167,7 @@ def init_networks(
     critic_architecture: Optional[Sequence[Union[str, ActivationFunction]]] = None,
     multiple_envs: bool = True,
     continuous: bool = False,
+    action_value: bool = False,
 ) -> Tuple[Network, Network]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
@@ -164,7 +179,10 @@ def init_networks(
         continuous=continuous,
     )
     critic = Network(
-        input_architecture=critic_architecture, actor=False, multiple_envs=multiple_envs
+        input_architecture=critic_architecture,
+        actor=False,
+        multiple_envs=multiple_envs,
+        action_value=action_value,
     )
     return actor, critic
 
@@ -186,6 +204,27 @@ def get_adam_tx(
     return optax.inject_hyperparams(optax.adam)(learning_rate=learning_rate, eps=eps)
 
 
+def get_model_and_state(network, key, init_obs, tx, init_action=None):
+    # Normalize to list
+    networks = network if isinstance(network, (list, tuple)) else [network]
+
+    # Split key for each network to avoid parameter collision
+    keys = jax.random.split(key, num=len(networks))
+
+    # Initialize each network's TrainState
+    models = tuple(
+        TrainState.create(
+            params=FrozenDict(net.init(k, init_obs, init_action)),
+            tx=tx,
+            apply_fn=net.apply,
+        )
+        for net, k in zip(networks, keys)
+    )
+
+    # Return single model or list, matching input
+    return models[0] if isinstance(network, Network) else models
+
+
 def init_actor_and_critic_state(
     env: Environment,
     env_params: Optional[EnvParams],
@@ -195,17 +234,20 @@ def init_actor_and_critic_state(
     critic_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
     critic_network: Network,
     critic_key: Optional[jax.Array] = None,
+    action_value: bool = False,
 ) -> Tuple[TrainState, Optional[TrainState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
-    observation_shape = get_observation_space_shape(env, env_params)
-    init_x = jnp.zeros(observation_shape)
-    actor_params = actor_network.init(actor_key, init_x)
-    critic_params = critic_network.init(critic_key, init_x)
-    actor = TrainState.create(
-        params=actor_params, tx=actor_tx, apply_fn=actor_network.apply
-    )
-    critic = TrainState.create(
-        params=critic_params, tx=critic_tx, apply_fn=critic_network.apply
+    observation_shape, action_shape = get_state_action_shapes(env, env_params)
+    obs = jnp.zeros(observation_shape)
+    action = jnp.zeros(action_shape)
+    actor = get_model_and_state(actor_network, actor_key, init_obs=obs, tx=actor_tx)
+
+    critic = get_model_and_state(
+        critic_network,
+        critic_key,
+        init_obs=obs,
+        tx=critic_tx,
+        init_action=action if action_value else None,
     )
     return actor, critic
 
@@ -219,11 +261,24 @@ def predict_probs_and_value(
     return pi.probs, val
 
 
+@partial(jax.jit, static_argnames=["is_sequence"])
 def predict_value(
-    critic_state: TrainState, critic_params: FrozenDict, obs: ndarray
+    critic_state: TrainState,
+    critic_params: FrozenDict,
+    obs: ndarray,
+    action: Optional[ndarray] = None,
 ) -> Array:
     """Return the predicted value of the given obs with the current critic state"""
-    return critic_state.apply_fn(critic_params, obs)  # type: ignore[attr-defined]
+
+    # Initialize first check if critic_state is a sequence
+    is_sequence = isinstance(critic_state, (list, tuple))
+
+    if is_sequence:
+        return tuple(
+            state.apply_fn(param, obs, action)
+            for state, param in zip(critic_state, critic_params)
+        )
+    return critic_state.apply_fn(critic_params, obs, action)  # type: ignore[attr-defined]
 
 
 def predict_probs(

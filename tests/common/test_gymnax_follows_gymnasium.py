@@ -18,8 +18,8 @@ def test_gymnax_and_gymnasium_match():
     obs_gym, _ = env_gym.reset(seed=seed)
     obs_gx, env_state = env_gx.reset(key, env_params)
     env_state = env_state.__class__(
-        *jnp.array(obs_gym, dtype=jnp.float32), time=jnp.array(0)
-    )
+        jnp.array(0), *jnp.array(obs_gym, dtype=jnp.float32)
+    )  # time first
     obs_gx = jnp.array(obs_gym, dtype=jnp.float32)
     assert jnp.allclose(obs_gym, obs_gx)
     action = 0

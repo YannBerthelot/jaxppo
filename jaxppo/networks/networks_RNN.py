@@ -22,7 +22,7 @@ from jaxppo.networks.utils import (
     parse_architecture,
 )
 from jaxppo.types_rnn import HiddenState
-from jaxppo.utils import get_num_actions
+from jaxppo.utils import get_num_actions, get_observation_space_shape
 
 
 class NetworkRNN(nn.Module):
@@ -37,6 +37,7 @@ class NetworkRNN(nn.Module):
     multiple_envs: bool = True
     lstm_hidden_size: int = 64
     continuous: bool = False
+    action_value: bool = False
 
     @property
     def extractor_architecture(self) -> nn.Sequential:
@@ -46,11 +47,18 @@ class NetworkRNN(nn.Module):
 
     @nn.compact
     def __call__(
-        self, hiddens: list[Array], actor_critic_in: tuple[Array, Array]
+        self,
+        hiddens: list[Array],
+        actor_critic_in: tuple[Array, Array],
+        action: Optional[Array] = None,
     ) -> tuple[list[HiddenState], Array]:
         obs, dones = actor_critic_in
 
-        embedding = obs
+        if self.action_value:
+            embedding = jnp.concatenate([obs, action], axis=-1)
+        else:
+            embedding = obs
+
         extractor_hiddens, embedding = ScannedRNN(self.lstm_hidden_size)(
             hiddens, (embedding, dones)
         )
@@ -95,6 +103,7 @@ def init_networks(
     multiple_envs: bool = True,
     lstm_hidden_size: int = 64,
     continuous: bool = False,
+    action_value: bool = False,
 ) -> Tuple[NetworkRNN, NetworkRNN]:
     """Create actor and critic adapted to the environment and following the\
           given architectures"""
@@ -110,6 +119,7 @@ def init_networks(
         actor=False,
         multiple_envs=multiple_envs,
         lstm_hidden_size=lstm_hidden_size,
+        action_value=action_value,
     )
     return actor, critic
 
@@ -131,6 +141,30 @@ def get_adam_tx(
     return optax.inject_hyperparams(optax.adam)(learning_rate=learning_rate, eps=eps)
 
 
+def get_model_and_state(
+    network: Union[NetworkRNN, Sequence[NetworkRNN]],
+    key: jax.random.PRNGKey,
+    lstm_hidden_size: int,
+    num_envs: int,
+    tx: Union[GradientTransformationExtraArgs, GradientTransformation],
+    init_x: jax.Array,
+):
+    if isinstance(network, NetworkRNN):
+        network = [network]
+    models, hidden_states = [], []
+    for _network in network:
+        sub_key, key = jax.random.split(key)
+        _init_hidden_state = init_hidden_state(lstm_hidden_size, num_envs, sub_key)
+        params = _network.init(sub_key, _init_hidden_state, init_x)
+        model = TrainState.create(params=params, tx=tx, apply_fn=_network.apply)
+        models.append(model)
+        hidden_states.append(_init_hidden_state)
+    models = tuple(models)
+    if len(models) == 1:
+        return models[0], hidden_states[0]
+    return models, hidden_states
+
+
 def init_actor_and_critic_state(
     env: Environment,
     env_params: EnvParams,
@@ -141,23 +175,22 @@ def init_actor_and_critic_state(
     critic_tx: Union[GradientTransformationExtraArgs, GradientTransformation],
     critic_network: NetworkRNN,
     lstm_hidden_size: int = 64,
+    action_value: bool = False,
 ) -> Tuple[tuple[TrainState, TrainState], tuple[HiddenState, HiddenState]]:
     """Returns the proper agent state for the given networks, keys, environment and optimizer (tx)"""
     init_x = (
-        jnp.zeros((1, num_envs, *env.observation_space(env_params).shape)),
+        jnp.zeros((1, num_envs, get_observation_space_shape(env, env_params))),
         jnp.zeros((1, num_envs)),
     )
     rng, actor_key, critic_key = jax.random.split(rng, num=3)
-    init_hidden_state_actor = init_hidden_state(lstm_hidden_size, num_envs, actor_key)
-    init_hidden_state_critic = init_hidden_state(lstm_hidden_size, num_envs, critic_key)
-    actor_params = actor_network.init(actor_key, init_hidden_state_actor, init_x)
-    critic_params = critic_network.init(critic_key, init_hidden_state_critic, init_x)
-    actor = TrainState.create(
-        params=actor_params, tx=actor_tx, apply_fn=actor_network.apply
+
+    actor, init_hidden_state_actor = get_model_and_state(
+        actor_network, actor_key, lstm_hidden_size, num_envs, actor_tx, init_x
     )
-    critic = TrainState.create(
-        params=critic_params, tx=critic_tx, apply_fn=critic_network.apply
+    critic, init_hidden_state_critic = get_model_and_state(
+        critic_network, critic_key, lstm_hidden_size, num_envs, critic_tx, init_x
     )
+
     return (actor, critic), (init_hidden_state_actor, init_hidden_state_critic)
 
 
@@ -176,9 +209,10 @@ def predict_value_and_hidden(
     hidden: HiddenState,
     obs: ndarray,
     done: ndarray,
+    action: Optional[ndarray] = None,
 ) -> tuple[Array, HiddenState]:
     """Return the predicted value of the given obs with the current critic state"""
-    return critic_state.apply_fn(critic_params, hidden, (obs, done))  # type: ignore[attr-defined]
+    return critic_state.apply_fn(critic_params, hidden, (obs, done), action)  # type: ignore[attr-defined]
 
 
 def predict_probs(
@@ -187,9 +221,10 @@ def predict_probs(
     hidden: HiddenState,
     obs: ndarray,
     done: ndarray,
+    action: Optional[ndarray] = None,
 ) -> Array:
     """Return the predicted action logits of the given obs with the current actor state"""
-    return actor_state.apply_fn(actor_params, hidden, (obs, done))[0].probs  # type: ignore[attr-defined]
+    return actor_state.apply_fn(actor_params, hidden, (obs, done), action)[0].probs  # type: ignore[attr-defined]
 
 
 def get_pi(

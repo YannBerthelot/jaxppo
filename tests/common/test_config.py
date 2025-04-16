@@ -2,7 +2,7 @@
 
 import gymnax
 
-from jaxppo.config import PPOConfig
+from jaxppo.ppo.ppo_config import PPOConfig
 
 
 def test_serializing_env_id():
